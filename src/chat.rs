@@ -16,7 +16,7 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Connection {
     pub base_url: String,
     pub api_key: String,

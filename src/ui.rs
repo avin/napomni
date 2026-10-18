@@ -55,6 +55,7 @@ pub struct MainWindow {
     model: Entity<TextInput>,
     pub status: String,
     pub busy: bool,
+    verified_connection: Option<Connection>,
 }
 impl MainWindow {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -77,6 +78,7 @@ impl MainWindow {
             model: cx.new(|cx| TextInput::new(connection.model, "ID модели", cx)),
             status,
             busy: false,
+            verified_connection: None,
         }
     }
     fn save_connection(&mut self, cx: &mut Context<Self>) -> bool {
@@ -128,6 +130,8 @@ impl MainWindow {
             self.command.update(cx, |input, cx| input.set_value("", cx));
         }
         let history = self.session.as_ref().unwrap().messages().to_vec();
+        let connection = self.session.as_ref().unwrap().connection().clone();
+        let must_probe = self.verified_connection.as_ref() != Some(&connection);
         self.busy = true;
         self.status = if probe {
             "Проверяем подключение и инструменты…"
@@ -148,6 +152,9 @@ impl MainWindow {
                                 .await
                                 .map(|_| "Подключение и tool calling работают".to_owned())
                         } else {
+                            if must_probe {
+                                provider.probe().await?;
+                            }
                             provider.reply(&history).await
                         }
                     })
@@ -166,6 +173,7 @@ impl MainWindow {
                             view.busy = false;
                             match result {
                                 Ok(text) => {
+                                    view.verified_connection = Some(connection);
                                     if probe {
                                         view.status = text;
                                     } else if let Some(session) = view.session.as_mut() {
