@@ -4,6 +4,15 @@ use gpui::{
 };
 use std::{sync::mpsc, time::Duration};
 use win_notifi_toast::chat::{ChatSession, Connection, Provider};
+use win_notifi_toast::{
+    reminder_tools::{CommandOutcome, run_command_with_progress},
+    reminders::{CommandContext, ReminderId},
+};
+
+enum ChatEvent {
+    Fact(String),
+    Finished(Result<CommandOutcome, String>),
+}
 
 struct Palette {
     background: u32,
@@ -117,11 +126,18 @@ impl MainWindow {
                 return;
             }
         };
+        let mut context = None;
+        let application = cx.global::<crate::reminder_ui::Reminders>().app.clone();
         if !probe {
             let text = self.command.read(cx).value().trim().to_owned();
             if text.is_empty() {
                 return;
             }
+            context = Some(CommandContext::capture(
+                application.lock().unwrap().clock(),
+                &text,
+                None,
+            ));
             if let Err(e) = self.session.as_mut().unwrap().record_user(&text) {
                 self.status = e.to_string();
                 cx.notify();
@@ -147,20 +163,30 @@ impl MainWindow {
                 .and_then(|rt| {
                     rt.block_on(async {
                         if probe {
-                            provider
-                                .probe()
-                                .await
-                                .map(|_| "Подключение и tool calling работают".to_owned())
+                            provider.probe().await.map(|_| CommandOutcome {
+                                text: "Подключение и tool calling работают".into(),
+                                ..Default::default()
+                            })
                         } else {
                             if must_probe {
                                 provider.probe().await?;
                             }
-                            provider.reply(&history).await
+                            let progress = sender.clone();
+                            Ok(run_command_with_progress(
+                                &provider,
+                                &history,
+                                context.unwrap(),
+                                application,
+                                move |fact| {
+                                    let _ = progress.send(ChatEvent::Fact(fact.into()));
+                                },
+                            )
+                            .await)
                         }
                     })
                     .map_err(|e| e.to_string())
                 });
-            let _ = sender.send(result);
+            let _ = sender.send(ChatEvent::Finished(result));
         });
         cx.spawn(async move |view, cx| {
             loop {
@@ -168,18 +194,39 @@ impl MainWindow {
                     .timer(Duration::from_millis(40))
                     .await;
                 match receiver.try_recv() {
-                    Ok(result) => {
+                    Ok(ChatEvent::Fact(fact)) => {
+                        let _ = view.update(cx, |view, cx| {
+                            if let Some(session) = view.session.as_mut()
+                                && let Err(error) = session.record_assistant(&fact)
+                            {
+                                view.status = error.to_string();
+                            }
+                            cx.notify();
+                        });
+                    }
+                    Ok(ChatEvent::Finished(result)) => {
                         let _ = view.update(cx, |view, cx| {
                             view.busy = false;
                             match result {
-                                Ok(text) => {
+                                Ok(outcome) => {
                                     view.verified_connection = Some(connection);
+                                    let saved = !outcome.facts.is_empty();
+                                    let text = outcome.text;
                                     if probe {
-                                        view.status = text;
-                                    } else if let Some(session) = view.session.as_mut() {
+                                        view.status = text.clone();
+                                    } else if let Some(session) = view.session.as_mut()
+                                        && !text.is_empty()
+                                    {
                                         view.status = match session.record_assistant(&text) {
                                             Ok(()) => String::new(),
                                             Err(e) => e.to_string(),
+                                        };
+                                    }
+                                    if let Some(error) = outcome.error {
+                                        view.status = if saved {
+                                            format!("{error} Фактический результат операции сохранён в чате.")
+                                        } else {
+                                            error
                                         };
                                     }
                                 }
@@ -217,6 +264,56 @@ impl Render for MainWindow {
             .as_ref()
             .map(|s| s.messages().to_vec())
             .unwrap_or_default();
+        let records = cx
+            .global::<crate::reminder_ui::Reminders>()
+            .app
+            .lock()
+            .map(|app| {
+                app.reminders()
+                    .iter()
+                    .map(|r| (r.clone(), r.schedule.description(app.clock())))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        let mut reminder_list = div()
+            .id("reminder-list")
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .w(gpui::px(280.))
+            .p_3()
+            .bg(rgb(c.surface))
+            .child("Список напоминаний");
+        for completed in [false, true] {
+            reminder_list =
+                reminder_list.child(div().mt_3().font_weight(gpui::FontWeight::SEMIBOLD).child(
+                    if completed {
+                        "Завершённые"
+                    } else {
+                        "Активные"
+                    },
+                ));
+            for (reminder, description) in records.iter().filter(|(r, _)| r.completed == completed)
+            {
+                reminder_list = reminder_list.child(
+                    div()
+                        .p_2()
+                        .border_l_2()
+                        .border_color(rgb(reminder.border))
+                        .child(format!("#{} {}", reminder.id, reminder.text))
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(rgb(c.muted))
+                                .child(description.clone()),
+                        ),
+                );
+            }
+        }
+        if records.is_empty() {
+            reminder_list = reminder_list.child("Пока напоминаний нет");
+        }
         div()
             .size_full()
             .flex()
@@ -279,19 +376,7 @@ impl Render for MainWindow {
                     .gap_4()
                     .flex_1()
                     .min_h_0()
-                    .child(
-                        div()
-                            .w(gpui::px(240.))
-                            .p_3()
-                            .bg(rgb(c.surface))
-                            .child("Список напоминаний")
-                            .child(
-                                div()
-                                    .mt_3()
-                                    .text_color(rgb(c.muted))
-                                    .child("Пока напоминаний нет"),
-                            ),
-                    )
+                    .child(reminder_list)
                     .child(
                         div()
                             .flex_1()
@@ -368,14 +453,16 @@ impl Render for MainWindow {
     }
 }
 pub struct Toast {
-    pub title: &'static str,
-    pub text: &'static str,
+    pub title: String,
+    pub text: String,
     pub border: u32,
+    pub reminder_id: Option<ReminderId>,
 }
 
 impl Render for Toast {
     fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let colors = Palette::for_window(window);
+        let reminder_id = self.reminder_id;
         div()
             .size_full()
             .font_family("Segoe UI")
@@ -397,7 +484,7 @@ impl Render for Toast {
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(self.title),
+                            .child(self.title.clone()),
                     )
                     .child(
                         div()
@@ -408,11 +495,16 @@ impl Render for Toast {
                             .text_sm()
                             .text_color(rgb(colors.muted))
                             .hover(|style| style.bg(rgb(colors.background)))
-                            .on_click(|_, window, _| window.remove_window())
+                            .on_click(move |_, window, cx| {
+                                if let Some(id) = reminder_id {
+                                    crate::reminder_ui::close(id, cx);
+                                }
+                                window.remove_window();
+                            })
                             .child("Закрыть ×"),
                     ),
             )
-            .child(div().child(self.text))
+            .child(div().child(self.text.clone()))
             .child(
                 div()
                     .text_sm()

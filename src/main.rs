@@ -2,6 +2,7 @@
 
 mod input;
 mod native;
+mod reminder_ui;
 mod settings_ui;
 mod ui;
 
@@ -149,9 +150,10 @@ fn show_demo(cx: &mut App) -> Result<()> {
             |window, cx| {
                 window.set_window_title(title);
                 cx.new(|_| ui::Toast {
-                    title,
-                    text,
+                    title: title.into(),
+                    text: text.into(),
                     border,
+                    reminder_id: None,
                 })
             },
         )?;
@@ -197,6 +199,7 @@ fn main() {
         input::bind_keys(cx);
         let result = (|| -> Result<()> {
             settings_ui::initialize(cx)?;
+            reminder_ui::initialize(cx)?;
             let tray = tray()?;
             let main = cx.open_window(
                 WindowOptions {
@@ -235,6 +238,21 @@ fn main() {
                         .await;
                     if cx
                         .update(|cx| {
+                            match reminder_ui::poll(cx) {
+                                Ok(true) => {
+                                    let main = cx.global::<Desktop>().main;
+                                    let _ = main.update(cx, |_, _, cx| cx.notify());
+                                }
+                                Ok(false) => {}
+                                Err(error) => {
+                                    let main = cx.global::<Desktop>().main;
+                                    let message = error.to_string();
+                                    let _ = main.update(cx, |view, _, cx| {
+                                        view.status = message;
+                                        cx.notify();
+                                    });
+                                }
+                            }
                             while let Ok(event) = TrayIconEvent::receiver().try_recv() {
                                 if matches!(
                                     event,
