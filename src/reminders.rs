@@ -69,6 +69,10 @@ impl CommandContext {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Schedule {
+    Constrained {
+        base: Box<Schedule>,
+        limits: crate::constraints::Constraints,
+    },
     Yearly {
         rule: crate::calendar_dates::Yearly,
     },
@@ -92,6 +96,9 @@ pub enum Schedule {
 impl Schedule {
     pub fn next_after(&self, after: DateTime<Utc>, _clock: &dyn Clock) -> Option<DateTime<Utc>> {
         let at = match self {
+            Self::Constrained { base, limits } => {
+                return limits.next_after(base, after, _clock, None);
+            }
             Self::Once { at } => Some(*at),
             Self::Interval {
                 anchor_utc,
@@ -111,6 +118,7 @@ impl Schedule {
         cursor: Option<NaiveDateTime>,
     ) -> Option<DateTime<Utc>> {
         match self {
+            Self::Constrained { base, limits } => limits.next_after(base, after, clock, cursor),
             Self::Weekly { rule } => rule.next_after(after, clock, cursor),
             Self::Monthly { rule } => rule.next_after(after, clock, cursor),
             Self::Yearly { rule } => rule.next_after(after, clock, cursor),
@@ -118,6 +126,9 @@ impl Schedule {
         }
     }
     pub fn is_calendar_repeating(&self) -> bool {
+        if let Self::Constrained { base, .. } = self {
+            return base.is_calendar_repeating();
+        }
         matches!(
             self,
             Self::Weekly { .. } | Self::Monthly { .. } | Self::Yearly { .. }
@@ -125,6 +136,9 @@ impl Schedule {
     }
     pub fn description(&self, clock: &dyn Clock) -> String {
         let local = match self {
+            Self::Constrained { base, limits } => {
+                return format!("{}. {}", base.description(clock), limits.description());
+            }
             Self::Once { at } => clock.local_at(*at),
             Self::Interval {
                 anchor_utc,
@@ -142,6 +156,7 @@ impl Schedule {
     }
     pub fn ended_at(&self, now: DateTime<Utc>, clock: &dyn Clock) -> bool {
         match self {
+            Self::Constrained { limits, .. } => limits.ended_at(now, clock),
             Self::Once { at } => *at <= now,
             Self::Weekly { .. } => false,
             Self::Monthly { .. } => false,
@@ -158,6 +173,10 @@ impl Schedule {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ScheduleInput {
+    Constrained {
+        base: Box<ScheduleInput>,
+        limits: crate::constraints::Constraints,
+    },
     Yearly {
         dates: Vec<crate::calendar_dates::YearlyDate>,
         times: Vec<NaiveTime>,
@@ -190,6 +209,18 @@ pub enum ScheduleInput {
 impl ScheduleInput {
     pub fn resolve(self, context: &CommandContext, clock: &dyn Clock) -> Result<Schedule> {
         let schedule = match self {
+            Self::Constrained { base, limits } => {
+                ensure!(
+                    !matches!(*base, Self::Constrained { .. }),
+                    "Вложенные ограничения не поддерживаются"
+                );
+                let base = base.resolve(context, clock)?;
+                limits.validate(&base)?;
+                Schedule::Constrained {
+                    base: Box::new(base),
+                    limits,
+                }
+            }
             Self::Yearly { dates, times } => Schedule::Yearly {
                 rule: crate::calendar_dates::Yearly::new(dates, times)?,
             },
@@ -242,7 +273,11 @@ impl ScheduleInput {
         };
         ensure!(
             schedule.next_after(clock.sample().utc, clock).is_some(),
-            "Выбранное время уже прошло. Уточните новое время"
+            if matches!(schedule, Schedule::Constrained { .. }) {
+                "Сочетание ограничений не даёт будущего срабатывания в поддерживаемом поиске: до 400 календарных лет и 100000 кандидатов. Уточните правило"
+            } else {
+                "Выбранное время уже прошло. Уточните новое время"
+            }
         );
         Ok(schedule)
     }

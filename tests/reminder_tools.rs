@@ -285,3 +285,83 @@ fn calendar_date_chat_tools_publish_actual_monthly_and_yearly_rules() {
     assert_eq!(reopened.reminders().len(), 2);
     assert!(reopened.open_toasts().is_empty());
 }
+#[test]
+fn constrained_chat_supports_workday_window_exclusion_and_limits_only_clear() {
+    use chrono::Days;
+    use win_notifi_toast::reminders::Clock;
+    let clock = Arc::new(SystemClock);
+    let today = clock.local_at(clock.sample().utc).date();
+    let end = today.checked_add_days(Days::new(30)).unwrap();
+    let excluded = today.checked_add_days(Days::new(1)).unwrap();
+    let limits = json!({"start_date":today.to_string(),"end_date":end.to_string(),"window":{"start":"09:00:00","end":"18:00:00"},"weekdays":[1,2,3,4,5],"excluded_dates":[excluded.to_string()]});
+    let (provider, server) = server(vec![
+        completion(
+            json!({"role":"assistant","content":null,"tool_calls":[{"id":"limited1","type":"function","function":{"name":"create_reminder","arguments":json!({"text":"Разминка","schedule":{"kind":"constrained","base":{"kind":"interval","seconds":1800},"limits":limits}}).to_string()}}]}),
+        ),
+        completion(
+            json!({"role":"assistant","content":null,"tool_calls":[{"id":"clear1","type":"function","function":{"name":"update_reminder","arguments":json!({"id":1,"patch":{"limits":{}}}).to_string()}}]}),
+        ),
+        completion(json!({"role":"assistant","content":"Готово"})),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let app = Arc::new(Mutex::new(
+        Application::open(
+            clock.clone(),
+            Box::new(JsonStore::new(dir.path().join("data.json"))),
+        )
+        .unwrap(),
+    ));
+    let context = CommandContext::capture(
+        clock.as_ref(),
+        "Каждые полчаса с 9 до 18 по будням, кроме выбранной даты",
+        None,
+    );
+    let history = vec![Message {
+        role: "user".into(),
+        content: context.source.clone(),
+    }];
+    let outcome = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(run_command(&provider, &history, context, app.clone()));
+    assert!(outcome.error.is_none());
+    assert_eq!(outcome.facts.len(), 2);
+    assert!(outcome.facts[0].contains("09:00:00–18:00:00 включительно"));
+    assert!(outcome.facts[0].contains("пн, вт, ср, чт, пт"));
+    assert!(outcome.facts[0].contains(&excluded.format("%d.%m.%Y").to_string()));
+    let requests = server.join().unwrap();
+    let create = requests[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "create_reminder")
+        .unwrap();
+    assert!(
+        create["function"]["parameters"]["properties"]["schedule"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|variant| variant["properties"]["kind"]["const"] == "constrained")
+    );
+    let update = requests[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "update_reminder")
+        .unwrap();
+    assert_eq!(
+        update["function"]["parameters"]["properties"]["patch"]["properties"]["limits"]["type"],
+        "object"
+    );
+    let before: Value =
+        serde_json::from_str(requests[1]["messages"][3]["content"].as_str().unwrap()).unwrap();
+    let after: Value =
+        serde_json::from_str(requests[2]["messages"][5]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        before["reminder"]["schedule"]["base"],
+        after["reminder"]["schedule"]["base"]
+    );
+    assert_eq!(
+        after["reminder"]["schedule"]["limits"]["window"],
+        Value::Null
+    );
+}

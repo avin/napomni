@@ -100,16 +100,15 @@ fn update(
         cx.global::<DesktopSettings>().0.settings().corner,
         Corner::BottomLeft | Corner::BottomRight
     );
-    if let Some(handle) = handle {
-        if handle
+    if let Some(handle) = handle
+        && handle
             .update(cx, |view, window, cx| {
                 view.reconcile(snapshots.clone(), placement, bottom, window, cx);
                 view.poll(window, cx);
             })
             .is_ok()
-        {
-            return Ok(Some(handle));
-        }
+    {
+        return Ok(Some(handle));
     }
     if snapshots.is_empty() {
         return Ok(None);
@@ -657,11 +656,11 @@ impl Render for ToastStack {
         for index in order.into_iter().rev() {
             let card = &self.cards[index];
             let mut frame = card.frame(now);
-            if let Some(drag) = &self.drag {
-                if drag.id == card.snapshot.reminder_id {
-                    frame.x += drag.delta;
-                    frame.opacity *= (1. - drag.delta.abs() / width).max(0.2);
-                }
+            if let Some(drag) = &self.drag
+                && drag.id == card.snapshot.reminder_id
+            {
+                frame.x += drag.delta;
+                frame.opacity *= (1. - drag.delta.abs() / width).max(0.2);
             }
             if frame.opacity < 0.01 {
                 continue;
