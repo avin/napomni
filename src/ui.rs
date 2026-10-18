@@ -615,68 +615,6 @@ impl Render for MainWindow {
             )
     }
 }
-pub struct Toast {
-    pub title: String,
-    pub text: String,
-    pub border: u32,
-    pub reminder_id: Option<ReminderId>,
-}
-
-impl Render for Toast {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = Palette::for_window(window);
-        let reminder_id = self.reminder_id;
-        div()
-            .size_full()
-            .font_family("Segoe UI")
-            .text_base()
-            .text_color(rgb(colors.text))
-            .border_2()
-            .border_color(rgb(self.border))
-            .bg(rgb(colors.surface))
-            .p_4()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        div()
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
-                            .child(self.title.clone()),
-                    )
-                    .child(
-                        div()
-                            .id("close-toast")
-                            .cursor_pointer()
-                            .px_2()
-                            .py_1()
-                            .text_sm()
-                            .text_color(rgb(colors.muted))
-                            .hover(|style| style.bg(rgb(colors.background)))
-                            .on_click(move |_, window, cx| {
-                                if let Some(id) = reminder_id {
-                                    crate::reminder_ui::close(id, cx);
-                                }
-                                window.remove_window();
-                            })
-                            .child("Закрыть ×"),
-                    ),
-            )
-            .child(div().child(self.text.clone()))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(colors.muted))
-                    .child("Останется до ручного закрытия"),
-            )
-    }
-}
-
 pub fn error_message(message: String) -> Div {
     div().p_6().font_family("Segoe UI").child(message)
 }
