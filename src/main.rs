@@ -1,5 +1,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod input;
 mod native;
 mod settings_ui;
 mod ui;
@@ -193,6 +194,7 @@ fn main() {
     let demo = std::env::args().any(|arg| arg == "--test-toasts");
     let show_main = std::env::args().any(|arg| arg == "--open");
     Application::new().run(move |cx: &mut App| {
+        input::bind_keys(cx);
         let result = (|| -> Result<()> {
             settings_ui::initialize(cx)?;
             let tray = tray()?;
@@ -217,7 +219,7 @@ fn main() {
                         native::hide(window);
                         false
                     });
-                    cx.new(|_| ui::MainWindow)
+                    cx.new(ui::MainWindow::new)
                 },
             )?;
             cx.set_global(Desktop {
