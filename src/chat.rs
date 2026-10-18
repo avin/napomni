@@ -41,6 +41,8 @@ pub struct ChatSession {
     directory: PathBuf,
     connection: Connection,
     messages: Vec<Message>,
+    pending: Option<crate::commands::CommandRecovery>,
+    redaction_keys: Vec<String>,
 }
 impl ChatSession {
     pub fn default_directory() -> PathBuf {
@@ -60,9 +62,13 @@ impl ChatSession {
                 Err(e) => Err(e.into()),
             }
         }
+        let connection: Connection = read(directory.join("connection.json"))?;
+        let redaction_keys = vec![connection.api_key.clone()];
         Ok(Self {
-            connection: read(directory.join("connection.json"))?,
+            connection,
+            redaction_keys,
             messages: read(directory.join("chat.json"))?,
+            pending: read(directory.join("pending-command.json"))?,
             directory,
         })
     }
@@ -72,12 +78,38 @@ impl ChatSession {
     pub fn messages(&self) -> &[Message] {
         &self.messages
     }
+    pub fn pending(&self) -> Option<&crate::commands::CommandRecovery> {
+        self.pending.as_ref()
+    }
+    pub fn save_pending(
+        &mut self,
+        pending: Option<crate::commands::CommandRecovery>,
+    ) -> Result<()> {
+        let mut value = serde_json::to_value(pending)?;
+        for key in self.redaction_keys.iter().filter(|key| !key.is_empty()) {
+            redact_chat_value(&mut value, key, None);
+        }
+        let pending = serde_json::from_value(value.clone())?;
+        let prepared = self.directory.join("pending-command.pending");
+        let mut file = fs::File::create(&prepared)?;
+        use std::io::Write;
+        file.write_all(&serde_json::to_vec_pretty(&value)?)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(prepared, self.directory.join("pending-command.json"))
+            .context("Не удалось сохранить незавершённый ответ")?;
+        self.pending = pending;
+        Ok(())
+    }
     pub fn save_connection(&mut self, connection: Connection) -> Result<()> {
         fs::write(
             self.directory.join("connection.json"),
             serde_json::to_vec_pretty(&connection)?,
         )
         .context("Не удалось сохранить подключение")?;
+        if !self.redaction_keys.contains(&connection.api_key) {
+            self.redaction_keys.push(connection.api_key.clone());
+        }
         self.connection = connection;
         Ok(())
     }
@@ -98,11 +130,13 @@ impl ChatSession {
     }
     fn record(&mut self, role: &str, text: &str) -> Result<()> {
         let mut messages = self.messages.clone();
-        let content = if self.connection.api_key.is_empty() {
-            text.to_owned()
-        } else {
-            text.replace(&self.connection.api_key, "[ключ скрыт]")
-        };
+        let content = self
+            .redaction_keys
+            .iter()
+            .filter(|key| !key.is_empty())
+            .fold(text.to_owned(), |text, key| {
+                text.replace(key, "[ключ скрыт]")
+            });
         messages.push(Message {
             role: role.into(),
             content,
@@ -110,7 +144,64 @@ impl ChatSession {
         self.save_messages(messages)
     }
     pub fn clear(&mut self) -> Result<()> {
+        self.save_pending(None)?;
         self.save_messages(Vec::new())
+    }
+}
+fn redact_chat_value(value: &mut serde_json::Value, key: &str, field: Option<&str>) {
+    use serde_json::Value;
+    match value {
+        Value::String(text)
+            if !matches!(
+                field,
+                Some(
+                    "id" | "command_id"
+                        | "call_id"
+                        | "tool_call_id"
+                        | "name"
+                        | "role"
+                        | "submitted_utc"
+                        | "submitted_local"
+                )
+            ) =>
+        {
+            if let Ok(mut embedded) = serde_json::from_str::<Value>(text)
+                && (embedded.is_object() || embedded.is_array())
+            {
+                redact_content(&mut embedded, key);
+                *text = embedded.to_string();
+            } else {
+                *text = text.replace(key, "[ключ скрыт]");
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_chat_value(item, key, None);
+            }
+        }
+        Value::Object(fields) => {
+            for (name, value) in fields {
+                redact_chat_value(value, key, Some(name));
+            }
+        }
+        _ => {}
+    }
+}
+fn redact_content(value: &mut serde_json::Value, key: &str) {
+    use serde_json::Value;
+    match value {
+        Value::String(text) => *text = text.replace(key, "[ключ скрыт]"),
+        Value::Array(items) => {
+            for item in items {
+                redact_content(item, key);
+            }
+        }
+        Value::Object(fields) => {
+            for value in fields.values_mut() {
+                redact_content(value, key);
+            }
+        }
+        _ => {}
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]

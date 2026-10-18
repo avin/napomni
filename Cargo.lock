@@ -6285,6 +6285,7 @@ dependencies = [
  "tokio",
  "tray-icon",
  "unicode-segmentation",
+ "uuid",
  "windows",
 ]
 
