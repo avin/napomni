@@ -2,10 +2,10 @@ use anyhow::{Result, bail};
 use gpui::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::{
-    Foundation::{HWND, POINT},
+    Foundation::HWND,
     Graphics::{
         Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute},
-        Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint},
+        Gdi::{GetMonitorInfoW, MONITORINFO},
     },
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
@@ -16,32 +16,108 @@ use windows::Win32::{
     },
 };
 
-pub struct WorkArea {
-    pub left: i32,
-    pub top: i32,
-    pub right: i32,
-    pub bottom: i32,
-    pub scale: f32,
-}
+pub use win_notifi_toast::placement::WorkArea;
 
-pub fn primary_work_area() -> Result<WorkArea> {
-    // Monitor information is in physical pixels; GPUI layout uses logical pixels.
-    unsafe {
-        let monitor = MonitorFromPoint(POINT { x: 0, y: 0 }, MONITOR_DEFAULTTOPRIMARY);
-        let mut info = MONITORINFO {
-            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
-            ..Default::default()
+pub struct WindowsDesktop;
+
+impl win_notifi_toast::placement::DesktopPlatform for WindowsDesktop {
+    fn monitors(&self) -> Result<Vec<win_notifi_toast::placement::Monitor>> {
+        use windows::Win32::{
+            Foundation::{LPARAM, RECT},
+            Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR, MONITORINFOEXW},
         };
-        GetMonitorInfoW(monitor, &mut info).ok()?;
-        let (mut x, mut y) = (96, 96);
-        GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y)?;
-        Ok(WorkArea {
-            left: info.rcWork.left,
-            top: info.rcWork.top,
-            right: info.rcWork.right,
-            bottom: info.rcWork.bottom,
-            scale: x as f32 / 96.0,
-        })
+        unsafe extern "system" fn collect(
+            monitor: HMONITOR,
+            _: HDC,
+            _: *mut RECT,
+            data: LPARAM,
+        ) -> windows::core::BOOL {
+            let result =
+                unsafe { &mut *(data.0 as *mut Vec<win_notifi_toast::placement::Monitor>) };
+            let mut info = MONITORINFOEXW::default();
+            info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
+            if unsafe { GetMonitorInfoW(monitor, &mut info as *mut _ as *mut MONITORINFO) }
+                .as_bool()
+            {
+                let (mut x, mut y) = (96, 96);
+                if unsafe { GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &mut x, &mut y) }.is_ok() {
+                    let work = info.monitorInfo.rcWork;
+                    let end = info
+                        .szDevice
+                        .iter()
+                        .position(|c| *c == 0)
+                        .unwrap_or(info.szDevice.len());
+                    result.push(win_notifi_toast::placement::Monitor {
+                        id: String::from_utf16_lossy(&info.szDevice[..end]),
+                        primary: info.monitorInfo.dwFlags & 1 != 0,
+                        area: WorkArea {
+                            left: work.left,
+                            top: work.top,
+                            right: work.right,
+                            bottom: work.bottom,
+                            scale: x as f32 / 96.0,
+                        },
+                    });
+                }
+            }
+            true.into()
+        }
+        let mut monitors = Vec::new();
+        unsafe {
+            EnumDisplayMonitors(
+                None,
+                None,
+                Some(collect),
+                LPARAM(&mut monitors as *mut _ as isize),
+            )
+            .ok()?;
+        }
+        anyhow::ensure!(
+            !monitors.is_empty(),
+            "Не удалось получить рабочие области мониторов"
+        );
+        Ok(monitors)
+    }
+
+    fn set_autostart(&self, enabled: bool) -> Result<()> {
+        use windows::{
+            Win32::{Foundation::ERROR_FILE_NOT_FOUND, System::Registry::*},
+            core::{PCWSTR, w},
+        };
+        let mut key = HKEY::default();
+        unsafe {
+            RegCreateKeyExW(
+                HKEY_CURRENT_USER,
+                w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                None,
+                PCWSTR::null(),
+                REG_OPTION_NON_VOLATILE,
+                KEY_SET_VALUE,
+                None,
+                &mut key,
+                None,
+            )
+            .ok()?;
+            let result = if enabled {
+                let command = format!("\"{}\"", std::env::current_exe()?.display());
+                let bytes: Vec<u8> = command
+                    .encode_utf16()
+                    .chain(Some(0))
+                    .flat_map(u16::to_le_bytes)
+                    .collect();
+                RegSetValueExW(key, w!("WinNotifiToast"), None, REG_SZ, Some(&bytes))
+            } else {
+                let result = RegDeleteValueW(key, w!("WinNotifiToast"));
+                if result == ERROR_FILE_NOT_FOUND {
+                    windows::Win32::Foundation::ERROR_SUCCESS
+                } else {
+                    result
+                }
+            };
+            let _ = RegCloseKey(key);
+            result.ok()?;
+        }
+        Ok(())
     }
 }
 
@@ -116,4 +192,101 @@ pub fn place_toast(
         }
         Ok(())
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use win_notifi_toast::placement::DesktopPlatform;
+    use windows::{
+        Win32::{Foundation::ERROR_FILE_NOT_FOUND, System::Registry::*},
+        core::w,
+    };
+
+    #[test]
+    #[ignore = "writes the current user's Run value briefly, then restores it"]
+    fn windows_autostart_roundtrip() -> Result<()> {
+        struct Restore {
+            key: HKEY,
+            previous: Option<(REG_VALUE_TYPE, Vec<u8>)>,
+        }
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                unsafe {
+                    if let Some((kind, bytes)) = &self.previous {
+                        let _ = RegSetValueExW(
+                            self.key,
+                            w!("WinNotifiToast"),
+                            None,
+                            *kind,
+                            Some(bytes),
+                        );
+                    } else {
+                        let _ = RegDeleteValueW(self.key, w!("WinNotifiToast"));
+                    }
+                    let _ = RegCloseKey(self.key);
+                }
+            }
+        }
+        unsafe fn read(key: HKEY) -> Result<Option<(REG_VALUE_TYPE, Vec<u8>)>> {
+            let mut kind = REG_VALUE_TYPE::default();
+            let mut len = 0;
+            let result = unsafe {
+                RegQueryValueExW(
+                    key,
+                    w!("WinNotifiToast"),
+                    None,
+                    Some(&mut kind),
+                    None,
+                    Some(&mut len),
+                )
+            };
+            if result == ERROR_FILE_NOT_FOUND {
+                return Ok(None);
+            }
+            result.ok()?;
+            let mut bytes = vec![0; len as usize];
+            unsafe {
+                RegQueryValueExW(
+                    key,
+                    w!("WinNotifiToast"),
+                    None,
+                    Some(&mut kind),
+                    Some(bytes.as_mut_ptr()),
+                    Some(&mut len),
+                )
+                .ok()?;
+            }
+            Ok(Some((kind, bytes)))
+        }
+        unsafe {
+            let mut key = HKEY::default();
+            RegOpenKeyExW(
+                HKEY_CURRENT_USER,
+                w!("Software\\Microsoft\\Windows\\CurrentVersion\\Run"),
+                None,
+                KEY_QUERY_VALUE | KEY_SET_VALUE,
+                &mut key,
+            )
+            .ok()?;
+            let _restore = Restore {
+                key,
+                previous: read(key)?,
+            };
+            WindowsDesktop.set_autostart(true)?;
+            let (_, bytes) = read(key)?.expect("Run value must exist after enabling");
+            let actual: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                .collect();
+            assert_eq!(
+                String::from_utf16_lossy(&actual).trim_end_matches('\0'),
+                format!("\"{}\"", std::env::current_exe()?.display())
+            );
+            WindowsDesktop.set_autostart(false)?;
+            assert!(read(key)?.is_none());
+            assert!(!WindowsDesktop.monitors()?.is_empty());
+        }
+        Ok(())
+    }
 }

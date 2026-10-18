@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod native;
+mod settings_ui;
 mod ui;
 
 use std::time::Duration;
@@ -97,17 +98,8 @@ fn show_demo(cx: &mut App) -> Result<()> {
         cx.global_mut::<Desktop>().toasts = open;
         return Ok(());
     }
-    let area = native::primary_work_area()?;
-    let scale = area.scale;
-    let margin = (16.0 * scale).round() as i32;
-    let width = (368.0 * scale).round() as i32;
-    let height = (156.0 * scale).round() as i32;
-    let gap = (12.0 * scale).round() as i32;
-    anyhow::ensure!(
-        area.right - area.left >= width + 2 * margin
-            && area.bottom - area.top >= height * 3 + gap * 2 + 2 * margin,
-        "Рабочая область слишком мала для трёх тестовых карточек"
-    );
+    let placement = cx.global::<settings_ui::DesktopSettings>().0.placement()?;
+    let scale = placement.scale;
     for (index, (title, text, border)) in [
         (
             "Пора размяться",
@@ -128,8 +120,8 @@ fn show_demo(cx: &mut App) -> Result<()> {
     .into_iter()
     .enumerate()
     {
-        let x = area.right - margin - width;
-        let y = area.top + margin + index as i32 * (height + gap);
+        let Some(rect) = placement.card(index, 156.) else { break; };
+        let win_notifi_toast::placement::Rect { x, y, width, height } = rect;
         let handle = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(Bounds::new(
@@ -195,6 +187,7 @@ fn main() {
     let show_main = std::env::args().any(|arg| arg == "--open");
     Application::new().run(move |cx: &mut App| {
         let result = (|| -> Result<()> {
+            settings_ui::initialize(cx)?;
             let tray = tray()?;
             let main = cx.open_window(
                 WindowOptions {
