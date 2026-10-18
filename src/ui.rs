@@ -1,7 +1,7 @@
 use crate::schedule_demo;
 use gpui::assets::IconName;
 use gpui::component::{
-    ActiveTheme, Disableable, Icon, Selectable, Sizable,
+    ActiveTheme, Disableable, Icon, Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
 };
@@ -172,11 +172,12 @@ impl MainWindow {
         };
         cx.notify();
     }
-    fn open_catalog(&mut self, cx: &mut Context<Self>) {
+    fn open_catalog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.save_connection(cx) {
             crate::model_picker::open(
                 self.session.as_ref().unwrap().connection().clone(),
                 cx.entity(),
+                window,
                 cx,
             );
         }
@@ -244,13 +245,22 @@ impl MainWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.busy || !self.save_connection(cx) {
+        if self.busy {
+            return;
+        }
+        if !self.save_connection(cx) {
+            if probe {
+                show_probe_result(std::mem::take(&mut self.status), false, window, cx);
+            }
             return;
         }
         let provider = match Provider::new(self.session.as_ref().unwrap().connection()) {
             Ok(p) => p,
             Err(e) => {
                 self.status = e.to_string();
+                if probe {
+                    show_probe_result(std::mem::take(&mut self.status), false, window, cx);
+                }
                 cx.notify();
                 return;
             }
@@ -342,6 +352,7 @@ impl MainWindow {
                 });
             let _ = sender.send(ChatEvent::Finished(result));
         });
+        let request_window = window.window_handle();
         cx.spawn(async move |view, cx| {
             loop {
                 cx.background_executor()
@@ -360,7 +371,8 @@ impl MainWindow {
                         });
                     }
                     Ok(ChatEvent::Finished(result)) => {
-                        let _ = view.update(cx, |view, cx| {
+                        let success = result.as_ref().is_ok_and(|outcome| outcome.error.is_none());
+                        let message = view.update(cx, |view, cx| {
                             view.busy = false;
                             view.history_scroll.scroll_to_bottom();
                             match result {
@@ -392,19 +404,31 @@ impl MainWindow {
                                     }
                                     if let Some(error)=recovery_error {view.status=format!("{} Не удалось сохранить продолжение ответа: {error}",view.status);}
                                 }
-                                Err(e) => view.status = if view.pending.as_ref().is_some_and(|p|!p.facts.is_empty()) {format!("{e} Ранее выполненные изменения сохранены.")} else {e},
+                                Err(e) => view.status = if !probe && view.pending.as_ref().is_some_and(|p|!p.facts.is_empty()) {format!("{e} Ранее выполненные изменения сохранены.")} else {e},
                             }
                             cx.notify();
+                            if probe { std::mem::take(&mut view.status) } else { String::new() }
                         });
+                        if probe && let Ok(message) = message {
+                            let _ = request_window.update(cx, |_, window, cx| {
+                                show_probe_result(message, success, window, cx);
+                            });
+                        }
                         break;
                     }
                     Err(mpsc::TryRecvError::Disconnected) => {
-                        let _ = view.update(cx, |view, cx| {
+                        let message = view.update(cx, |view, cx| {
                             view.busy = false;
                             view.history_scroll.scroll_to_bottom();
                             view.status = "Сетевой обработчик завершился без ответа".into();
                             cx.notify();
+                            if probe { std::mem::take(&mut view.status) } else { String::new() }
                         });
+                        if probe && let Ok(message) = message {
+                            let _ = request_window.update(cx, |_, window, cx| {
+                                show_probe_result(message, false, window, cx);
+                            });
+                        }
                         break;
                     }
                     Err(mpsc::TryRecvError::Empty) => {}
@@ -463,14 +487,16 @@ impl MainWindow {
                                     .gap_2()
                                     .child(
                                         Button::new("catalog")
+                                            .icon(IconName::List)
                                             .label("Каталог моделей")
                                             .disabled(self.busy)
-                                            .on_click(
-                                                cx.listener(|v, _, _, cx| v.open_catalog(cx)),
-                                            ),
+                                            .on_click(cx.listener(|v, _, window, cx| {
+                                                v.open_catalog(window, cx)
+                                            })),
                                     )
                                     .child(
                                         Button::new("save")
+                                            .icon(IconName::Save)
                                             .label("Сохранить")
                                             .disabled(self.busy)
                                             .on_click(cx.listener(|v, _, _, cx| {
@@ -479,7 +505,7 @@ impl MainWindow {
                                     )
                                     .child(
                                         Button::new("probe")
-                                            .primary()
+                                            .icon(IconName::Plug)
                                             .label("Проверить")
                                             .loading(self.busy)
                                             .on_click(cx.listener(|v, _, window, cx| {
@@ -506,11 +532,13 @@ impl MainWindow {
                                     .gap_2()
                                     .child(
                                         Button::new("placement")
+                                            .icon(IconName::Settings2)
                                             .label("Размещение и автозапуск")
                                             .on_click(|_, w, cx| crate::settings_ui::open(w, cx)),
                                     )
                                     .child(
                                         Button::new("demo")
+                                            .icon(IconName::FlaskConical)
                                             .ghost()
                                             .label("Тест тостов")
                                             .on_click(|_, _, cx| schedule_demo(cx)),
@@ -555,6 +583,11 @@ impl MainWindow {
         {
             filters = filters.child(
                 Button::new(("filter", index))
+                    .icon(match filter {
+                        Filter::Active => IconName::Bell,
+                        Filter::Paused => IconName::Pause,
+                        Filter::Completed => IconName::Check,
+                    })
                     .ghost()
                     .small()
                     .selected(self.filter == filter)
@@ -890,6 +923,7 @@ impl MainWindow {
                         .when(self.pending.is_some(), |e| {
                             e.child(
                                 Button::new("retry")
+                                    .icon(IconName::RefreshCw)
                                     .label("Продолжить ответ")
                                     .disabled(self.busy)
                                     .w_full()
@@ -933,6 +967,7 @@ impl Render for MainWindow {
                     .bg(t.background)
                     .child(
                         Button::new("nav-reminders")
+                            .icon(IconName::Bell)
                             .ghost()
                             .selected(self.page == Page::Reminders)
                             .label("Напоминания")
@@ -943,6 +978,7 @@ impl Render for MainWindow {
                     )
                     .child(
                         Button::new("nav-settings")
+                            .icon(IconName::Settings2)
                             .ghost()
                             .selected(self.page == Page::Settings)
                             .label("Настройки")
@@ -983,4 +1019,42 @@ fn field(label: &'static str, input: impl IntoElement) -> Div {
 
 pub fn error_message(message: String) -> Div {
     div().p_3().font_family("Segoe UI").child(message)
+}
+
+fn show_probe_result(message: String, success: bool, window: &mut Window, cx: &mut gpui::App) {
+    window.open_dialog(cx, move |dialog, _, cx| {
+        let theme = cx.theme();
+        dialog
+            .title(if success {
+                "Подключение работает"
+            } else {
+                "Не удалось проверить подключение"
+            })
+            .width(px(520.))
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap_3()
+                    .child(
+                        Icon::new(if success {
+                            IconName::CircleCheck
+                        } else {
+                            IconName::CircleAlert
+                        })
+                        .text_color(if success {
+                            theme.success
+                        } else {
+                            theme.danger
+                        }),
+                    )
+                    .child(div().flex_1().min_w_0().child(message.clone())),
+            )
+            .footer(
+                Button::new("close-probe-result")
+                    .icon(IconName::Check)
+                    .label("Понятно")
+                    .on_click(|_, window, cx| window.close_dialog(cx)),
+            )
+    });
 }

@@ -1,7 +1,8 @@
 use crate::ui::MainWindow;
+use gpui::assets::IconName;
 use gpui::{
     component::{
-        ActiveTheme, Icon, IconName,
+        ActiveTheme, Icon, WindowExt,
         button::Button,
         input::{Input, InputState},
     },
@@ -14,31 +15,21 @@ use win_notifi_toast::{
     chat::Connection,
 };
 
-pub fn open(connection: Connection, parent: Entity<MainWindow>, cx: &mut App) {
-    let result = gpui::open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(800.), px(700.)),
-                cx,
-            ))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Каталог моделей".into()),
-                ..Default::default()
-            }),
-            window_min_size: Some(size(px(580.), px(440.))),
-            ..Default::default()
-        },
-        cx,
-        move |window, cx| {
-            crate::native::square_corners(window);
-            cx.new(|cx| ModelPicker::new(connection, parent, window, cx))
-        },
-    );
-    if let Err(error) = result {
-        eprintln!("Не удалось открыть каталог моделей: {error}");
-    }
+pub fn open(connection: Connection, parent: Entity<MainWindow>, window: &mut Window, cx: &mut App) {
+    let picker = cx.new(|cx| ModelPicker::new(connection, parent, window, cx));
+    let initial_focus = std::cell::Cell::new(true);
+    window.open_dialog(cx, move |dialog, window, cx| {
+        if initial_focus.replace(false) {
+            picker.read(cx).search.focus_handle(cx).focus(window, cx);
+        }
+        dialog.title("Каталог моделей").width(px(720.)).child(
+            div()
+                .h((window.viewport_size().height - px(180.)).min(px(480.)))
+                .child(picker.clone()),
+        )
+    });
 }
+
 struct ModelPicker {
     connection: Connection,
     parent: Entity<MainWindow>,
@@ -113,7 +104,7 @@ impl ModelPicker {
             parent.select_catalog_model(&self.catalog, id, &self.connection, window, cx)
         });
         match outcome {
-            Ok(()) => window.remove_window(),
+            Ok(()) => window.close_dialog(cx),
             Err(error) => {
                 self.failed = true;
                 self.status = error.to_string();
@@ -245,6 +236,7 @@ impl Render for ModelPicker {
                                                     )
                                                     .child(
                                                         Button::new(("select-model", index))
+                                                            .icon(IconName::Check)
                                                             .label("Выбрать")
                                                             .tooltip(if supported {
                                                                 "Инструменты поддерживаются"
@@ -285,8 +277,9 @@ impl Render for ModelPicker {
                     }))
                     .child(
                         Button::new("close-model-picker")
+                            .icon(IconName::X)
                             .label("Закрыть")
-                            .on_click(|_, window, _| window.remove_window()),
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
                     ),
             )
     }

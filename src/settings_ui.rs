@@ -1,6 +1,7 @@
+use gpui::assets::IconName;
 use gpui::{
     component::{
-        ActiveTheme,
+        ActiveTheme, WindowExt,
         button::{Button, ButtonVariants},
         radio::Radio,
         switch::Switch,
@@ -26,33 +27,21 @@ pub fn initialize(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn open(_: &mut Window, cx: &mut App) {
-    let result = gpui::open_window(
-        WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-                None,
-                size(px(560.), px(480.)),
-                cx,
-            ))),
-            titlebar: Some(TitlebarOptions {
-                title: Some("Настройки".into()),
-                ..Default::default()
-            }),
-            window_min_size: Some(size(px(480.), px(400.))),
-            ..Default::default()
-        },
-        cx,
-        |window, cx| {
-            crate::native::square_corners(window);
-            cx.new(|_| SettingsView {
-                message: String::new(),
-                failed: false,
-            })
-        },
-    );
-    if let Err(error) = result {
-        eprintln!("Не удалось открыть настройки: {error}");
-    }
+pub fn open(window: &mut Window, cx: &mut App) {
+    let settings = cx.new(|_| SettingsView {
+        message: String::new(),
+        failed: false,
+    });
+    window.open_dialog(cx, move |dialog, window, _| {
+        dialog
+            .title("Размещение и автозапуск")
+            .width(px(520.))
+            .child(
+                div()
+                    .h((window.viewport_size().height - px(180.)).min(px(400.)))
+                    .child(settings.clone()),
+            )
+    });
 }
 
 struct SettingsView {
@@ -151,6 +140,12 @@ impl Render for SettingsView {
             for (column, corner) in corners.into_iter().enumerate() {
                 line = line.child(
                     Button::new(("corner", row * 2 + column))
+                        .icon(match corner {
+                            Corner::TopLeft => IconName::ArrowUpLeft,
+                            Corner::TopRight => IconName::ArrowUpRight,
+                            Corner::BottomLeft => IconName::ArrowDownLeft,
+                            Corner::BottomRight => IconName::ArrowDownRight,
+                        })
                         .flex_1()
                         .label(corner.label())
                         .toggled(settings.corner == corner)
@@ -245,9 +240,10 @@ impl Render for SettingsView {
                     }))
                     .child(
                         Button::new("close-settings")
+                            .icon(IconName::Check)
                             .primary()
                             .label("Готово")
-                            .on_click(|_, window, _| window.remove_window()),
+                            .on_click(|_, window, cx| window.close_dialog(cx)),
                     ),
             )
     }
