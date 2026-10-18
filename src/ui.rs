@@ -78,6 +78,7 @@ impl Render for MainWindow {
                     .child(div().text_color(rgb(colors.muted)).child("Здесь можно будет создавать и изменять напоминания обычными фразами."))
                     .child(div().mt_4().child("Например: «Напомни размяться через полчаса»"))))
             .child(div().flex().items_center().gap_4()
+                .child(button("Настройки размещения", crate::settings_ui::open))
                 .child(button("Показать тестовые тосты", |_, cx| schedule_demo(cx)))
                 .child(div().text_sm().text_color(rgb(colors.muted)).child("Появятся через 5 секунд. Переключитесь в другое окно.")))
             .child(div().text_sm().text_color(rgb(colors.muted))

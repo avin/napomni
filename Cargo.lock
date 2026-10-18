@@ -5845,6 +5845,8 @@ dependencies = [
  "anyhow",
  "gpui",
  "raw-window-handle",
+ "serde",
+ "serde_json",
  "tray-icon",
  "windows",
 ]
