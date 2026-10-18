@@ -257,6 +257,8 @@ pub struct CreateReminder {
 pub struct Persisted {
     pub reminders: Vec<Reminder>,
     pub next_id: ReminderId,
+    #[serde(default)]
+    pub undo: Option<crate::mutations::UndoEntry>,
 }
 pub trait ReminderStore: Send {
     fn load(&self) -> Result<Persisted>;
@@ -367,6 +369,11 @@ impl Application {
         };
         let mut next = self.state.clone();
         next.next_id = id;
+        next.undo = Some(crate::mutations::UndoEntry {
+            id,
+            before: None,
+            index: next.reminders.len(),
+        });
         next.reminders.push(reminder.clone());
         self.store.save(&next)?;
         self.state = next;
@@ -467,7 +474,7 @@ impl Application {
         Ok(())
     }
 }
-fn quoted_text(source: &str) -> Option<String> {
+pub(crate) fn quoted_text(source: &str) -> Option<String> {
     for (open, close) in [('«', '»'), ('"', '"'), ('“', '”')] {
         if let Some(start) = source.find(open) {
             let rest = &source[start + open.len_utf8()..];
