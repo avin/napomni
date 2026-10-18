@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde"] }
-async-openai = "0.28"
+async-openai = { version = "0.28", features = ["byot"] }
 gpui = { version = "=0.2.2", default-features = false, features = ["windows-manifest"] }
 raw-window-handle = "0.6"
 reqwest = { version = "0.12", features = ["json"] }
@@ -26,4 +26,5 @@ debug = 0
 
 [dev-dependencies]
 tempfile = "3"
+
 

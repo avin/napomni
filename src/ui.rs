@@ -90,6 +90,38 @@ impl MainWindow {
             verified_connection: None,
         }
     }
+    fn open_catalog(&mut self, cx: &mut Context<Self>) {
+        if self.save_connection(cx) {
+            crate::model_picker::open(
+                self.session.as_ref().unwrap().connection().clone(),
+                cx.entity(),
+                cx,
+            );
+        }
+    }
+    pub(crate) fn select_catalog_model(
+        &mut self,
+        catalog: &win_notifi_toast::catalog::Catalog,
+        id: &str,
+        source: &Connection,
+        cx: &mut Context<Self>,
+    ) -> anyhow::Result<()> {
+        let session = self
+            .session
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("Локальное хранилище недоступно"))?;
+        if session.connection().base_url != source.base_url
+            || session.connection().api_key != source.api_key
+        {
+            anyhow::bail!("Подключение изменилось. Откройте каталог заново.");
+        }
+        catalog.select(id, session)?;
+        self.model
+            .update(cx, |model, cx| model.set_value(id.to_owned(), cx));
+        self.status = format!("Выбрана модель {id}; перед запросом проверим инструменты");
+        cx.notify();
+        Ok(())
+    }
     fn save_connection(&mut self, cx: &mut Context<Self>) -> bool {
         let connection = Connection {
             base_url: self.base_url.read(cx).value().trim().into(),
@@ -259,6 +291,7 @@ impl Render for MainWindow {
         let probe = entity.clone();
         let clear = entity.clone();
         let send = entity.clone();
+        let catalog = entity.clone();
         let messages = self
             .session
             .as_ref()
@@ -364,6 +397,9 @@ impl Render for MainWindow {
                                     })
                                 },
                             ))
+                            .child(button("Каталог моделей", move |_, cx| {
+                                catalog.update(cx, |view, cx| view.open_catalog(cx))
+                            }))
                             .child(button(
                                 "Проверить подключение",
                                 move |_, cx| probe.update(cx, |v, cx| v.request(true, cx)),
