@@ -1,0 +1,255 @@
+use anyhow::{Context, Result};
+use async_openai::{
+    Client,
+    config::OpenAIConfig,
+    error::OpenAIError,
+    types::{
+        ChatCompletionRequestMessage, ChatCompletionResponseMessage, ChatCompletionTool,
+        CreateChatCompletionRequest,
+    },
+};
+use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Duration,
+};
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Connection {
+    pub base_url: String,
+    pub api_key: String,
+    pub model: String,
+}
+impl Default for Connection {
+    fn default() -> Self {
+        Self {
+            base_url: "https://api.openai.com/v1".into(),
+            api_key: String::new(),
+            model: String::new(),
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Message {
+    pub role: String,
+    pub content: String,
+}
+
+pub struct ChatSession {
+    directory: PathBuf,
+    connection: Connection,
+    messages: Vec<Message>,
+}
+impl ChatSession {
+    pub fn default_directory() -> PathBuf {
+        std::env::var_os("APPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("win-notifi-toast")
+    }
+    pub fn open(directory: impl AsRef<Path>) -> Result<Self> {
+        let directory = directory.as_ref().to_path_buf();
+        fs::create_dir_all(&directory).context("Не удалось открыть папку настроек")?;
+        fn read<T: serde::de::DeserializeOwned + Default>(path: PathBuf) -> Result<T> {
+            match fs::read(path) {
+                Ok(bytes) => Ok(serde_json::from_slice(&bytes)
+                    .context("Повреждён файл настроек или истории")?),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(T::default()),
+                Err(e) => Err(e.into()),
+            }
+        }
+        Ok(Self {
+            connection: read(directory.join("connection.json"))?,
+            messages: read(directory.join("chat.json"))?,
+            directory,
+        })
+    }
+    pub fn connection(&self) -> &Connection {
+        &self.connection
+    }
+    pub fn messages(&self) -> &[Message] {
+        &self.messages
+    }
+    pub fn save_connection(&mut self, connection: Connection) -> Result<()> {
+        fs::write(
+            self.directory.join("connection.json"),
+            serde_json::to_vec_pretty(&connection)?,
+        )
+        .context("Не удалось сохранить подключение")?;
+        self.connection = connection;
+        Ok(())
+    }
+    fn save_messages(&mut self, messages: Vec<Message>) -> Result<()> {
+        fs::write(
+            self.directory.join("chat.json"),
+            serde_json::to_vec_pretty(&messages)?,
+        )
+        .context("Не удалось сохранить историю")?;
+        self.messages = messages;
+        Ok(())
+    }
+    pub fn record_user(&mut self, text: &str) -> Result<()> {
+        self.record("user", text)
+    }
+    pub fn record_assistant(&mut self, text: &str) -> Result<()> {
+        self.record("assistant", text)
+    }
+    fn record(&mut self, role: &str, text: &str) -> Result<()> {
+        let mut messages = self.messages.clone();
+        let content = if self.connection.api_key.is_empty() {
+            text.to_owned()
+        } else {
+            text.replace(&self.connection.api_key, "[ключ скрыт]")
+        };
+        messages.push(Message {
+            role: role.into(),
+            content,
+        });
+        self.save_messages(messages)
+    }
+    pub fn clear(&mut self) -> Result<()> {
+        self.save_messages(Vec::new())
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ConnectionError {
+    Url,
+    Authorization,
+    Model,
+    Network,
+    Tools,
+    Response,
+}
+impl std::fmt::Display for ConnectionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+  Self::Url => "Проверьте базовый URL: нужен HTTP или HTTPS без ключа в адресе.",
+  Self::Authorization => "Провайдер отклонил API-ключ. Проверьте ключ и доступ к модели.",
+  Self::Model => "Модель не найдена или не поддерживает этот запрос. Проверьте ID и поддержку инструментов.",
+  Self::Network => "Нет ответа от провайдера. Проверьте адрес, сеть и доступность сервиса.",
+  Self::Tools => "Модель не выполнила проверочный вызов инструмента. Выберите модель с tool calling.",
+  Self::Response => "Не удалось прочитать ответ провайдера. Проверьте совместимость Chat Completions.",
+ })
+    }
+}
+impl std::error::Error for ConnectionError {}
+#[derive(Clone)]
+pub struct Provider {
+    client: Client<OpenAIConfig>,
+    model: String,
+}
+impl Provider {
+    pub fn new(connection: &Connection) -> std::result::Result<Self, ConnectionError> {
+        let url =
+            reqwest::Url::parse(connection.base_url.trim()).map_err(|_| ConnectionError::Url)?;
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(ConnectionError::Url);
+        }
+        if connection.model.trim().is_empty() {
+            return Err(ConnectionError::Model);
+        }
+        if connection.api_key.trim().is_empty() {
+            return Err(ConnectionError::Authorization);
+        }
+        let config = OpenAIConfig::new()
+            .with_api_base(connection.base_url.trim().trim_end_matches('/'))
+            .with_api_key(connection.api_key.clone());
+        let http = reqwest::Client::builder()
+            .timeout(Duration::from_secs(45))
+            .build()
+            .map_err(|_| ConnectionError::Network)?;
+        Ok(Self {
+            client: Client::with_config(config).with_http_client(http),
+            model: connection.model.clone(),
+        })
+    }
+    pub async fn complete(
+        &self,
+        messages: Vec<ChatCompletionRequestMessage>,
+        tools: Vec<ChatCompletionTool>,
+        force_probe: bool,
+    ) -> std::result::Result<ChatCompletionResponseMessage, ConnectionError> {
+        let request: CreateChatCompletionRequest = serde_json::from_value(json!({"model":self.model,"messages":messages,"tools":tools,"tool_choice":if force_probe {json!({"type":"function","function":{"name":"connection_probe"}})} else {json!("auto")}})).map_err(|_| ConnectionError::Response)?;
+        let response = self
+            .client
+            .chat()
+            .create(request)
+            .await
+            .map_err(|e| match e {
+                OpenAIError::ApiError(e) => {
+                    let code = format!(
+                        "{} {}",
+                        e.code.unwrap_or_default(),
+                        e.r#type.unwrap_or_default()
+                    )
+                    .to_lowercase();
+                    if code.contains("key") || code.contains("auth") || code.contains("permission")
+                    {
+                        ConnectionError::Authorization
+                    } else {
+                        ConnectionError::Model
+                    }
+                }
+                OpenAIError::Reqwest(e)
+                    if e.status()
+                        .is_some_and(|s| s.as_u16() == 401 || s.as_u16() == 403) =>
+                {
+                    ConnectionError::Authorization
+                }
+                OpenAIError::Reqwest(_) => ConnectionError::Network,
+                _ => ConnectionError::Response,
+            })?;
+        response
+            .choices
+            .into_iter()
+            .next()
+            .map(|c| c.message)
+            .ok_or(ConnectionError::Response)
+    }
+    pub async fn probe(&self) -> std::result::Result<(), ConnectionError> {
+        let messages = serde_json::from_value(json!([{"role":"user","content":"Вызови connection_probe с аргументом ok=true. Это безопасная проверка подключения."}])).unwrap();
+        let tool = serde_json::from_value(json!({"type":"function","function":{"name":"connection_probe","description":"Безопасная проверка инструментов, не изменяет данные.","parameters":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}}})).unwrap();
+        let response = self.complete(messages, vec![tool], true).await?;
+        let valid = response.tool_calls.unwrap_or_default().iter().any(|t| {
+            t.function.name == "connection_probe"
+                && serde_json::from_str::<serde_json::Value>(&t.function.arguments)
+                    .is_ok_and(|v| v == json!({"ok":true}))
+        });
+        if valid {
+            Ok(())
+        } else {
+            Err(ConnectionError::Tools)
+        }
+    }
+    pub async fn reply(&self, history: &[Message]) -> std::result::Result<String, ConnectionError> {
+        let mut messages = vec![
+            json!({"role":"system","content":"Отвечай по-русски. Не утверждай, что напоминание создано или изменено: инструменты напоминаний пока не подключены. Помогай уточнять запрос."}),
+        ];
+        messages.extend(
+            history
+                .iter()
+                .map(|m| json!({"role":m.role,"content":m.content})),
+        );
+        // Probe tool is harmless and lets providers accept tools even before reminder tools are installed.
+        let tools = vec![serde_json::from_value(json!({"type":"function","function":{"name":"connection_probe","description":"Проверка подключения без изменения данных","parameters":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}}})).unwrap()];
+        let response = self
+            .complete(
+                serde_json::from_value(json!(messages)).unwrap(),
+                tools,
+                false,
+            )
+            .await?;
+        response
+            .content
+            .filter(|s| !s.trim().is_empty())
+            .ok_or(ConnectionError::Response)
+    }
+}
