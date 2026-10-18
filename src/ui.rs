@@ -13,6 +13,11 @@ enum ChatEvent {
     Fact(String),
     Finished(Result<CommandOutcome, String>),
 }
+enum ListAction {
+    Pause(ReminderId, bool),
+    Delete(ReminderId),
+    Undo,
+}
 
 struct Palette {
     background: u32,
@@ -65,6 +70,7 @@ pub struct MainWindow {
     pub status: String,
     pub busy: bool,
     verified_connection: Option<Connection>,
+    pub(crate) selected_id: Option<ReminderId>,
 }
 impl MainWindow {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -88,7 +94,62 @@ impl MainWindow {
             status,
             busy: false,
             verified_connection: None,
+            selected_id: None,
         }
+    }
+    fn apply_list_action(&mut self, action: ListAction, cx: &mut Context<Self>) {
+        if self.busy {
+            self.status = "Дождитесь завершения текущей команды".into();
+            cx.notify();
+            return;
+        }
+        let application = cx.global::<crate::reminder_ui::Reminders>().app.clone();
+        let result = (|| -> anyhow::Result<String> {
+            let mut app = application
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Ядро напоминаний недоступно"))?;
+            match action {
+                ListAction::Pause(id, paused) => {
+                    app.set_paused(id, paused)?;
+                    Ok(format!(
+                        "{} #{}",
+                        if paused {
+                            "Приостановлено"
+                        } else {
+                            "Возобновлено"
+                        },
+                        id
+                    ))
+                }
+                ListAction::Delete(id) => {
+                    let reminder = app.delete(id)?;
+                    if self.selected_id == Some(id) {
+                        self.selected_id = None;
+                    }
+                    Ok(format!("Удалено #{}: «{}»", id, reminder.text))
+                }
+                ListAction::Undo => {
+                    let restored = app.undo()?;
+                    Ok(restored.map_or_else(
+                        || "Отмена выполнена. Созданная запись удалена".into(),
+                        |r| format!("Отмена выполнена. Восстановлено #{}: «{}»", r.id, r.text),
+                    ))
+                }
+            }
+        })();
+        self.status = match result {
+            Ok(fact) => {
+                if let Some(session) = self.session.as_mut()
+                    && let Err(error) = session.record_assistant(&fact)
+                {
+                    format!("{fact}. Не удалось сохранить историю: {error}")
+                } else {
+                    fact
+                }
+            }
+            Err(error) => error.to_string(),
+        };
+        cx.notify();
     }
     fn open_catalog(&mut self, cx: &mut Context<Self>) {
         if self.save_connection(cx) {
@@ -168,7 +229,7 @@ impl MainWindow {
             context = Some(CommandContext::capture(
                 application.lock().unwrap().clock(),
                 &text,
-                None,
+                self.selected_id,
             ));
             if let Err(e) = self.session.as_mut().unwrap().record_user(&text) {
                 self.status = e.to_string();
@@ -243,6 +304,7 @@ impl MainWindow {
                                 Ok(outcome) => {
                                     view.verified_connection = Some(connection);
                                     let saved = !outcome.facts.is_empty();
+                                    if saved { view.selected_id=None; }
                                     let text = outcome.text;
                                     if probe {
                                         view.status = text.clone();
@@ -292,6 +354,21 @@ impl Render for MainWindow {
         let clear = entity.clone();
         let send = entity.clone();
         let catalog = entity.clone();
+        let undo = entity.clone();
+        let detach = entity.clone();
+        let mut selection = div().flex().gap_2().items_center();
+        if let Some(id) = self.selected_id {
+            selection = selection
+                .child(format!("Выбрано для изменения: #{id}"))
+                .child(button("Снять выбор", move |_, cx| {
+                    detach.update(cx, |v, cx| {
+                        if !v.busy {
+                            v.selected_id = None;
+                            cx.notify();
+                        }
+                    })
+                }));
+        }
         let messages = self
             .session
             .as_ref()
@@ -317,7 +394,10 @@ impl Render for MainWindow {
             .w(gpui::px(280.))
             .p_3()
             .bg(rgb(c.surface))
-            .child("Список напоминаний");
+            .child("Список напоминаний")
+            .child(button("Отменить", move |_, cx| {
+                undo.update(cx, |v, cx| v.apply_list_action(ListAction::Undo, cx))
+            }));
         for completed in [false, true] {
             reminder_list =
                 reminder_list.child(div().mt_3().font_weight(gpui::FontWeight::SEMIBOLD).child(
@@ -329,8 +409,14 @@ impl Render for MainWindow {
                 ));
             for (reminder, description) in records.iter().filter(|(r, _)| r.completed == completed)
             {
+                let id = reminder.id;
+                let paused = reminder.paused;
+                let edit = entity.clone();
+                let pause = entity.clone();
+                let delete = entity.clone();
                 reminder_list = reminder_list.child(
                     div()
+                        .id(("reminder", id as usize))
                         .p_2()
                         .border_l_2()
                         .border_color(rgb(reminder.border))
@@ -340,6 +426,45 @@ impl Render for MainWindow {
                                 .text_sm()
                                 .text_color(rgb(c.muted))
                                 .child(description.clone()),
+                        )
+                        .child(div().text_sm().child(if paused {
+                            "Приостановлено"
+                        } else {
+                            ""
+                        }))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_wrap()
+                                .gap_2()
+                                .child(button("Редактировать", move |_, cx| {
+                                    edit.update(cx, |v, cx| {
+                                        if !v.busy {
+                                            v.selected_id = Some(id);
+                                            v.status = format!(
+                                                "Опишите изменение напоминания #{id} в чате"
+                                            );
+                                            cx.notify();
+                                        }
+                                    })
+                                }))
+                                .child(button(
+                                    if paused {
+                                        "Возобновить"
+                                    } else {
+                                        "Приостановить"
+                                    },
+                                    move |_, cx| {
+                                        pause.update(cx, |v, cx| {
+                                            v.apply_list_action(ListAction::Pause(id, !paused), cx)
+                                        })
+                                    },
+                                ))
+                                .child(button("Удалить", move |_, cx| {
+                                    delete.update(cx, |v, cx| {
+                                        v.apply_list_action(ListAction::Delete(id), cx)
+                                    })
+                                })),
                         ),
                 );
             }
@@ -433,6 +558,7 @@ impl Render for MainWindow {
                                         move |_, cx| {
                                             clear.update(cx, |v, cx| {
                                                 if !v.busy {
+                                                    v.selected_id = None;
                                                     if let Some(s) = v.session.as_mut()
                                                         && let Err(e) = s.clear()
                                                     {
@@ -464,6 +590,7 @@ impl Render for MainWindow {
                                             .child(div().child(m.content))
                                     })),
                             )
+                            .child(selection)
                             .child(self.command.clone())
                             .child(button("Отправить", move |_, cx| {
                                 send.update(cx, |v, cx| v.request(false, cx))

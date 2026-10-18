@@ -69,6 +69,12 @@ impl CommandContext {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Schedule {
+    Yearly {
+        rule: crate::calendar_dates::Yearly,
+    },
+    Monthly {
+        rule: crate::calendar_dates::Monthly,
+    },
     Once {
         at: DateTime<Utc>,
     },
@@ -93,6 +99,8 @@ impl Schedule {
             } => return crate::interval::next_after(*anchor_utc, *period_seconds, after),
             Self::OnceLocal { date_time } => _clock.resolve_local(*date_time).into_iter().min(),
             Self::Weekly { rule } => rule.next_after(after, _clock, None),
+            Self::Monthly { rule } => rule.next_after(after, _clock, None),
+            Self::Yearly { rule } => rule.next_after(after, _clock, None),
         };
         at.filter(|at| *at > after)
     }
@@ -104,11 +112,16 @@ impl Schedule {
     ) -> Option<DateTime<Utc>> {
         match self {
             Self::Weekly { rule } => rule.next_after(after, clock, cursor),
+            Self::Monthly { rule } => rule.next_after(after, clock, cursor),
+            Self::Yearly { rule } => rule.next_after(after, clock, cursor),
             _ => self.next_after(after, clock),
         }
     }
     pub fn is_calendar_repeating(&self) -> bool {
-        matches!(self, Self::Weekly { .. })
+        matches!(
+            self,
+            Self::Weekly { .. } | Self::Monthly { .. } | Self::Yearly { .. }
+        )
     }
     pub fn description(&self, clock: &dyn Clock) -> String {
         let local = match self {
@@ -119,6 +132,8 @@ impl Schedule {
             } => return crate::interval::description(*anchor_utc, *period_seconds, clock),
             Self::OnceLocal { date_time } => *date_time,
             Self::Weekly { rule } => return rule.description(),
+            Self::Monthly { rule } => return rule.description(),
+            Self::Yearly { rule } => return rule.description(),
         };
         format!(
             "Однократно {} (местное время)",
@@ -129,6 +144,8 @@ impl Schedule {
         match self {
             Self::Once { at } => *at <= now,
             Self::Weekly { .. } => false,
+            Self::Monthly { .. } => false,
+            Self::Yearly { .. } => false,
             Self::Interval { .. } => false,
             Self::OnceLocal { date_time } => clock
                 .resolve_local(*date_time)
@@ -141,6 +158,14 @@ impl Schedule {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ScheduleInput {
+    Yearly {
+        dates: Vec<crate::calendar_dates::YearlyDate>,
+        times: Vec<NaiveTime>,
+    },
+    Monthly {
+        days: Vec<u32>,
+        times: Vec<NaiveTime>,
+    },
     AfterSeconds {
         seconds: i64,
     },
@@ -165,6 +190,12 @@ pub enum ScheduleInput {
 impl ScheduleInput {
     pub fn resolve(self, context: &CommandContext, clock: &dyn Clock) -> Result<Schedule> {
         let schedule = match self {
+            Self::Yearly { dates, times } => Schedule::Yearly {
+                rule: crate::calendar_dates::Yearly::new(dates, times)?,
+            },
+            Self::Monthly { days, times } => Schedule::Monthly {
+                rule: crate::calendar_dates::Monthly::new(days, times)?,
+            },
             Self::Weekly {
                 weekdays,
                 times,
@@ -257,6 +288,8 @@ pub struct CreateReminder {
 pub struct Persisted {
     pub reminders: Vec<Reminder>,
     pub next_id: ReminderId,
+    #[serde(default)]
+    pub undo: Option<crate::mutations::UndoEntry>,
 }
 pub trait ReminderStore: Send {
     fn load(&self) -> Result<Persisted>;
@@ -367,6 +400,11 @@ impl Application {
         };
         let mut next = self.state.clone();
         next.next_id = id;
+        next.undo = Some(crate::mutations::UndoEntry {
+            id,
+            before: None,
+            index: next.reminders.len(),
+        });
         next.reminders.push(reminder.clone());
         self.store.save(&next)?;
         self.state = next;
@@ -467,7 +505,7 @@ impl Application {
         Ok(())
     }
 }
-fn quoted_text(source: &str) -> Option<String> {
+pub(crate) fn quoted_text(source: &str) -> Option<String> {
     for (open, close) in [('«', '»'), ('"', '"'), ('“', '”')] {
         if let Some(start) = source.find(open) {
             let rest = &source[start + open.len_utf8()..];
