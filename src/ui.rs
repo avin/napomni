@@ -351,6 +351,7 @@ impl Render for MainWindow {
                 div()
                     .flex()
                     .gap_3()
+                    .child(button("Настройки размещения", crate::settings_ui::open))
                     .child(button("Показать тестовые тосты", |_, cx| schedule_demo(cx)))
                     .child(div().text_sm().child(
                         "Закрытие окна оставляет приложение в трее. Выход — через меню значка.",
