@@ -225,3 +225,63 @@ fn interval_chat_exposes_schema_and_returns_durable_grid_facts() {
     assert_eq!(result["reminder"]["schedule"]["period_seconds"], 600);
     assert_eq!(app.lock().unwrap().reminders().len(), 1);
 }
+#[test]
+fn calendar_date_chat_tools_publish_actual_monthly_and_yearly_rules() {
+    let (provider, server) = server(vec![
+        completion(json!({"role":"assistant","content":null,"tool_calls":[
+         {"id":"monthly1","type":"function","function":{"name":"create_reminder","arguments":json!({"text":"Месячный отчёт","schedule":{"kind":"monthly","days":[1,31],"times":["12:00:00","18:00:00"]}}).to_string()}},
+         {"id":"yearly1","type":"function","function":{"name":"create_reminder","arguments":json!({"text":"Високосная дата","schedule":{"kind":"yearly","dates":[{"month":2,"day":29}],"times":["09:00:00"]}}).to_string()}}
+        ]})),
+        completion(json!({"role":"assistant","content":"Сохранено"})),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(SystemClock);
+    let path = dir.path().join("data.json");
+    let app = Arc::new(Mutex::new(
+        Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap(),
+    ));
+    let context = CommandContext::capture(clock.as_ref(), "Каждое 1 и 31 число и 29 февраля", None);
+    let history = vec![Message {
+        role: "user".into(),
+        content: context.source.clone(),
+    }];
+    let outcome = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(run_command(&provider, &history, context, app.clone()));
+    assert!(outcome.error.is_none());
+    assert_eq!(outcome.facts.len(), 2);
+    assert!(outcome.facts[0].contains("Ежемесячно"));
+    assert!(outcome.facts[1].contains("Ежегодно"));
+    let requests = server.join().unwrap();
+    let variants = requests[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "create_reminder")
+        .unwrap()["function"]["parameters"]["properties"]["schedule"]["oneOf"]
+        .as_array()
+        .unwrap();
+    for kind in ["monthly", "yearly", "weekly", "interval", "after_seconds"] {
+        assert!(
+            variants
+                .iter()
+                .any(|variant| variant["properties"]["kind"]["const"] == kind),
+            "Missing schedule schema: {kind}"
+        );
+    }
+    let monthly: Value =
+        serde_json::from_str(requests[1]["messages"][3]["content"].as_str().unwrap()).unwrap();
+    let yearly: Value =
+        serde_json::from_str(requests[1]["messages"][4]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(
+        monthly["reminder"]["schedule"]["rule"]["days"],
+        json!([1, 31])
+    );
+    assert_eq!(
+        yearly["reminder"]["schedule"]["rule"]["dates"],
+        json!([{"month":2,"day":29}])
+    );
+    let reopened = Application::open(clock, Box::new(JsonStore::new(&path))).unwrap();
+    assert_eq!(reopened.reminders().len(), 2);
+    assert!(reopened.open_toasts().is_empty());
+}
