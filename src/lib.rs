@@ -2,6 +2,7 @@ pub(crate) mod calendar;
 pub mod calendar_dates;
 pub mod catalog;
 pub mod chat;
+pub mod commands;
 mod interval;
 mod mutation_tools;
 pub mod mutations;

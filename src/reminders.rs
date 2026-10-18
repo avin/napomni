@@ -48,8 +48,9 @@ impl Clock for SystemClock {
         }
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandContext {
+    pub id: uuid::Uuid,
     pub submitted_utc: DateTime<Utc>,
     pub submitted_local: NaiveDateTime,
     pub source: String,
@@ -59,6 +60,7 @@ impl CommandContext {
     pub fn capture(clock: &dyn Clock, source: &str, selected_id: Option<ReminderId>) -> Self {
         let submitted_utc = clock.sample().utc;
         Self {
+            id: uuid::Uuid::new_v4(),
             submitted_utc,
             submitted_local: clock.local_at(submitted_utc),
             source: source.into(),
@@ -290,6 +292,8 @@ pub struct Persisted {
     pub next_id: ReminderId,
     #[serde(default)]
     pub undo: Option<crate::mutations::UndoEntry>,
+    #[serde(default)]
+    pub tool_receipts: HashMap<String, crate::commands::ToolReceipt>,
 }
 pub trait ReminderStore: Send {
     fn load(&self) -> Result<Persisted>;

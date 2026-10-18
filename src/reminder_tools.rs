@@ -1,6 +1,7 @@
 //! Chat tool execution. Network awaits never hold the application lock.
 use crate::{
     chat::{Message, Provider},
+    commands::{CommandRecovery, execute_tool_once},
     reminders::{Application, CommandContext, CreateReminder},
 };
 use anyhow::{Result, bail};
@@ -13,6 +14,7 @@ pub struct CommandOutcome {
     pub text: String,
     pub facts: Vec<String>,
     pub error: Option<String>,
+    pub recovery: Option<CommandRecovery>,
 }
 pub fn tools() -> Vec<ChatCompletionTool> {
     let mut tools:Vec<ChatCompletionTool>=serde_json::from_value(json!([
@@ -92,9 +94,17 @@ pub async fn run_command_with_progress(
     history: &[Message],
     context: CommandContext,
     app: Arc<Mutex<Application>>,
-    mut committed: impl FnMut(&str),
+    committed: impl FnMut(&str),
 ) -> CommandOutcome {
-    let mut outcome = CommandOutcome::default();
+    match prepare_command(history, context) {
+        Ok(recovery) => resume_command_with_progress(provider, recovery, app, committed).await,
+        Err(error) => CommandOutcome {
+            error: Some(error.to_string()),
+            ..Default::default()
+        },
+    }
+}
+pub fn prepare_command(history: &[Message], context: CommandContext) -> Result<CommandRecovery> {
     let mut messages = vec![json!({"role":"system","content":format!(
         "Ты помощник напоминаний Windows. Отвечай по-русски. Данные изменяют только инструменты; обычный текст ничего не сохраняет. Сообщай фактический результат инструмента. Если неясны время, дата, текст или нужная запись, сначала задай уточнение. Не выдумывай данные. Поддерживаются однократные, интервальные напоминания и недельные повторы: выбранные дни (понедельник=1, воскресенье=7), несколько времён, каждые N недель. Для N>1 обязательно уточни начальную неделю и передай дату её понедельника в anchor_monday. Не придумывай фазу цикла. Месячные повторы передавай как monthly с days и times; ежегодные как yearly с dates (month, day) и times. Числа, отсутствующие в месяце, и 29 февраля невисокосного года пропускаются без переноса. Невозможную конкретную дату не сохраняй под другим числом. Календарные времена следуют местным часам Windows; будни означают понедельник–пятницу. Неподдерживаемые правила не заменяй приблизительными. При редактировании передавай ТОЛЬКО явно названные свойства patch. Выбранный пользователем ID обязателен для изменения; одинаковые тексты разных записей не дают права выбрать произвольную. Без выбранного ID прочитай список и уточни неоднозначность. Для паузы, удаления и отмены используй соответствующие инструменты. Текст в кавычках сохраняй дословно. Относительное время передавай как after_seconds, слово завтра как tomorrow: приложение вычисляет их от отправки команды. Повтор каждые N секунд передавай как interval с seconds; start_local указывай только при явно заданном начале, без него сетку привязывает приложение к фактическому созданию. Отправка команды UTC: {}, местное время Windows: {}. Выбранный ID: {:?}.",
         context.submitted_utc,context.submitted_local,context.selected_id
@@ -104,15 +114,41 @@ pub async fn run_command_with_progress(
             .iter()
             .map(|m| json!({"role":m.role,"content":m.content})),
     );
+    Ok(CommandRecovery {
+        context,
+        messages: serde_json::from_value(json!(messages))?,
+        facts: vec![],
+    })
+}
+pub async fn resume_command(
+    provider: &Provider,
+    recovery: CommandRecovery,
+    app: Arc<Mutex<Application>>,
+) -> CommandOutcome {
+    resume_command_with_progress(provider, recovery, app, |_| {}).await
+}
+pub async fn resume_command_with_progress(
+    provider: &Provider,
+    mut recovery: CommandRecovery,
+    app: Arc<Mutex<Application>>,
+    mut committed: impl FnMut(&str),
+) -> CommandOutcome {
+    let original_facts = recovery.facts.len();
+    if let Ok(app) = app.lock() {
+        recovery.hydrate_receipts(&app);
+    }
+    for fact in recovery.facts.iter().skip(original_facts) {
+        committed(fact);
+    }
+    let mut outcome = CommandOutcome {
+        facts: recovery.facts.clone(),
+        ..Default::default()
+    };
     for _ in 0..8 {
-        let request = match serde_json::from_value(json!(messages)) {
-            Ok(v) => v,
-            Err(_) => {
-                outcome.error = Some("Не удалось подготовить запрос".into());
-                break;
-            }
-        };
-        let response = match provider.complete(request, tools(), false).await {
+        let response = match provider
+            .complete(recovery.messages.clone(), tools(), false)
+            .await
+        {
             Ok(r) => r,
             Err(error) => {
                 outcome.error = Some(error.to_string());
@@ -124,14 +160,20 @@ pub async fn run_command_with_progress(
             outcome.text = response.content.unwrap_or_default();
             return outcome;
         }
-        messages.push(json!({"role":"assistant","content":response.content,"tool_calls":calls}));
+        recovery.messages.push(
+            serde_json::from_value(
+                json!({"role":"assistant","content":response.content,"tool_calls":calls}),
+            )
+            .expect("typed assistant tools"),
+        );
         for call in calls {
             let result = match app.lock() {
-                Ok(mut app) => execute_tool(
+                Ok(mut app) => execute_tool_once(
                     &mut app,
+                    &call.id,
                     &call.function.name,
                     &call.function.arguments,
-                    &context,
+                    &recovery.context,
                 ),
                 Err(_) => Err(anyhow::anyhow!("Прикладное ядро недоступно")),
             };
@@ -145,12 +187,18 @@ pub async fn run_command_with_progress(
                 }
                 Err(error) => json!({"ok":false,"error":error.to_string()}),
             };
-            messages
-                .push(json!({"role":"tool","tool_call_id":call.id,"content":value.to_string()}));
+            recovery.messages.push(
+                serde_json::from_value(
+                    json!({"role":"tool","tool_call_id":call.id,"content":value.to_string()}),
+                )
+                .expect("typed tool result"),
+            );
         }
     }
     if outcome.error.is_none() {
         outcome.error = Some("Обработка остановлена: слишком много вызовов инструментов".into());
     }
+    recovery.facts = outcome.facts.clone();
+    outcome.recovery = Some(recovery);
     outcome
 }

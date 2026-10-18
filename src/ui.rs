@@ -5,7 +5,8 @@ use gpui::{
 use std::{sync::mpsc, time::Duration};
 use win_notifi_toast::chat::{ChatSession, Connection, Provider};
 use win_notifi_toast::{
-    reminder_tools::{CommandOutcome, run_command_with_progress},
+    commands::CommandRecovery,
+    reminder_tools::{CommandOutcome, prepare_command, resume_command_with_progress},
     reminders::{CommandContext, ReminderId},
 };
 
@@ -71,6 +72,7 @@ pub struct MainWindow {
     pub busy: bool,
     verified_connection: Option<Connection>,
     pub(crate) selected_id: Option<ReminderId>,
+    pending: Option<CommandRecovery>,
 }
 impl MainWindow {
     pub fn new(cx: &mut Context<Self>) -> Self {
@@ -85,6 +87,14 @@ impl MainWindow {
             .as_ref()
             .map(|s| s.connection().clone())
             .unwrap_or_default();
+        let pending = session.as_ref().and_then(|s| s.pending()).cloned();
+        let selected_id = pending.as_ref().and_then(|p| p.context.selected_id);
+        let status = if status.is_empty() && pending.is_some() {
+            "Есть незавершённый ответ. Его можно продолжить без повторного выполнения операций."
+                .into()
+        } else {
+            status
+        };
         Self {
             session,
             command: cx.new(|cx| TextInput::new("", "Введите команду по-русски", cx)),
@@ -94,7 +104,8 @@ impl MainWindow {
             status,
             busy: false,
             verified_connection: None,
-            selected_id: None,
+            selected_id,
+            pending,
         }
     }
     fn apply_list_action(&mut self, action: ListAction, cx: &mut Context<Self>) {
@@ -208,6 +219,14 @@ impl MainWindow {
         }
     }
     fn request(&mut self, probe: bool, cx: &mut Context<Self>) {
+        self.send_request(probe, false, cx);
+    }
+    fn retry_command(&mut self, cx: &mut Context<Self>) {
+        if self.pending.is_some() {
+            self.send_request(false, true, cx);
+        }
+    }
+    fn send_request(&mut self, probe: bool, retry: bool, cx: &mut Context<Self>) {
         if self.busy || !self.save_connection(cx) {
             return;
         }
@@ -220,8 +239,9 @@ impl MainWindow {
             }
         };
         let mut context = None;
+        let mut recovery = if retry { self.pending.clone() } else { None };
         let application = cx.global::<crate::reminder_ui::Reminders>().app.clone();
-        if !probe {
+        if !probe && !retry {
             let text = self.command.read(cx).value().trim().to_owned();
             if text.is_empty() {
                 return;
@@ -239,6 +259,29 @@ impl MainWindow {
             self.command.update(cx, |input, cx| input.set_value("", cx));
         }
         let history = self.session.as_ref().unwrap().messages().to_vec();
+        if !probe {
+            if recovery.is_none() {
+                recovery = match prepare_command(&history, context.unwrap()) {
+                    Ok(recovery) => Some(recovery),
+                    Err(error) => {
+                        self.status = error.to_string();
+                        cx.notify();
+                        return;
+                    }
+                };
+            }
+            if let Err(error) = self
+                .session
+                .as_mut()
+                .unwrap()
+                .save_pending(recovery.clone())
+            {
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
+            self.pending = recovery.clone();
+        }
         let connection = self.session.as_ref().unwrap().connection().clone();
         let must_probe = self.verified_connection.as_ref() != Some(&connection);
         self.busy = true;
@@ -265,10 +308,9 @@ impl MainWindow {
                                 provider.probe().await?;
                             }
                             let progress = sender.clone();
-                            Ok(run_command_with_progress(
+                            Ok(resume_command_with_progress(
                                 &provider,
-                                &history,
-                                context.unwrap(),
+                                recovery.unwrap(),
                                 application,
                                 move |fact| {
                                     let _ = progress.send(ChatEvent::Fact(fact.into()));
@@ -303,6 +345,10 @@ impl MainWindow {
                             match result {
                                 Ok(outcome) => {
                                     view.verified_connection = Some(connection);
+                                    let recovery_error=if !probe {
+                                        view.pending=outcome.recovery.clone();
+                                        view.session.as_mut().and_then(|s|s.save_pending(outcome.recovery).err()).map(|e|e.to_string())
+                                    } else {None};
                                     let saved = !outcome.facts.is_empty();
                                     if saved { view.selected_id=None; }
                                     let text = outcome.text;
@@ -323,8 +369,9 @@ impl MainWindow {
                                             error
                                         };
                                     }
+                                    if let Some(error)=recovery_error {view.status=format!("{} Не удалось сохранить продолжение ответа: {error}",view.status);}
                                 }
-                                Err(e) => view.status = e,
+                                Err(e) => view.status = if view.pending.as_ref().is_some_and(|p|!p.facts.is_empty()) {format!("{e} Ранее выполненные изменения сохранены.")} else {e},
                             }
                             cx.notify();
                         });
@@ -356,6 +403,19 @@ impl Render for MainWindow {
         let catalog = entity.clone();
         let undo = entity.clone();
         let detach = entity.clone();
+        let retry = entity.clone();
+        let send_controls = div()
+            .flex()
+            .flex_wrap()
+            .gap_2()
+            .child(button("Отправить", move |_, cx| {
+                send.update(cx, |v, cx| v.request(false, cx))
+            }))
+            .when(self.pending.is_some(), |row| {
+                row.child(button("Продолжить ответ", move |_, cx| {
+                    retry.update(cx, |v, cx| v.retry_command(cx))
+                }))
+            });
         let mut selection = div().flex().gap_2().items_center();
         if let Some(id) = self.selected_id {
             selection = selection
@@ -558,11 +618,17 @@ impl Render for MainWindow {
                                         move |_, cx| {
                                             clear.update(cx, |v, cx| {
                                                 if !v.busy {
-                                                    v.selected_id = None;
-                                                    if let Some(s) = v.session.as_mut()
-                                                        && let Err(e) = s.clear()
-                                                    {
-                                                        v.status = e.to_string();
+                                                    if let Some(s) = v.session.as_mut() {
+                                                        match s.clear() {
+                                                            Ok(()) => {
+                                                                v.selected_id = None;
+                                                                v.pending = None;
+                                                                v.status.clear();
+                                                            }
+                                                            Err(error) => {
+                                                                v.status = error.to_string()
+                                                            }
+                                                        }
                                                     }
                                                     cx.notify();
                                                 }
@@ -592,9 +658,7 @@ impl Render for MainWindow {
                             )
                             .child(selection)
                             .child(self.command.clone())
-                            .child(button("Отправить", move |_, cx| {
-                                send.update(cx, |v, cx| v.request(false, cx))
-                            })),
+                            .child(send_controls),
                     ),
             )
             .child(

@@ -41,6 +41,7 @@ pub struct ChatSession {
     directory: PathBuf,
     connection: Connection,
     messages: Vec<Message>,
+    pending: Option<crate::commands::CommandRecovery>,
 }
 impl ChatSession {
     pub fn default_directory() -> PathBuf {
@@ -63,6 +64,7 @@ impl ChatSession {
         Ok(Self {
             connection: read(directory.join("connection.json"))?,
             messages: read(directory.join("chat.json"))?,
+            pending: read(directory.join("pending-command.json"))?,
             directory,
         })
     }
@@ -71,6 +73,29 @@ impl ChatSession {
     }
     pub fn messages(&self) -> &[Message] {
         &self.messages
+    }
+    pub fn pending(&self) -> Option<&crate::commands::CommandRecovery> {
+        self.pending.as_ref()
+    }
+    pub fn save_pending(
+        &mut self,
+        pending: Option<crate::commands::CommandRecovery>,
+    ) -> Result<()> {
+        let mut value = serde_json::to_value(pending)?;
+        if !self.connection.api_key.is_empty() {
+            redact_chat_value(&mut value, &self.connection.api_key, None);
+        }
+        let pending = serde_json::from_value(value.clone())?;
+        let prepared = self.directory.join("pending-command.pending");
+        let mut file = fs::File::create(&prepared)?;
+        use std::io::Write;
+        file.write_all(&serde_json::to_vec_pretty(&value)?)?;
+        file.sync_all()?;
+        drop(file);
+        fs::rename(prepared, self.directory.join("pending-command.json"))
+            .context("Не удалось сохранить незавершённый ответ")?;
+        self.pending = pending;
+        Ok(())
     }
     pub fn save_connection(&mut self, connection: Connection) -> Result<()> {
         fs::write(
@@ -110,7 +135,64 @@ impl ChatSession {
         self.save_messages(messages)
     }
     pub fn clear(&mut self) -> Result<()> {
+        self.save_pending(None)?;
         self.save_messages(Vec::new())
+    }
+}
+fn redact_chat_value(value: &mut serde_json::Value, key: &str, field: Option<&str>) {
+    use serde_json::Value;
+    match value {
+        Value::String(text)
+            if !matches!(
+                field,
+                Some(
+                    "id" | "command_id"
+                        | "call_id"
+                        | "tool_call_id"
+                        | "name"
+                        | "role"
+                        | "submitted_utc"
+                        | "submitted_local"
+                )
+            ) =>
+        {
+            if let Ok(mut embedded) = serde_json::from_str::<Value>(text)
+                && (embedded.is_object() || embedded.is_array())
+            {
+                redact_content(&mut embedded, key);
+                *text = embedded.to_string();
+            } else {
+                *text = text.replace(key, "[ключ скрыт]");
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                redact_chat_value(item, key, None);
+            }
+        }
+        Value::Object(fields) => {
+            for (name, value) in fields {
+                redact_chat_value(value, key, Some(name));
+            }
+        }
+        _ => {}
+    }
+}
+fn redact_content(value: &mut serde_json::Value, key: &str) {
+    use serde_json::Value;
+    match value {
+        Value::String(text) => *text = text.replace(key, "[ключ скрыт]"),
+        Value::Array(items) => {
+            for item in items {
+                redact_content(item, key);
+            }
+        }
+        Value::Object(fields) => {
+            for value in fields.values_mut() {
+                redact_content(value, key);
+            }
+        }
+        _ => {}
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq)]
