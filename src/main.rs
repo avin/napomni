@@ -270,6 +270,7 @@ fn main() {
                                     "open" => open_main(cx),
                                     "demo" => schedule_demo(cx),
                                     "quit" => {
+                                        reminder_ui::shutdown(cx);
                                         cx.quit();
                                         return;
                                     }
