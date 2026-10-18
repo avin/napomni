@@ -3,6 +3,7 @@ use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -68,14 +69,28 @@ impl CommandContext {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Schedule {
-    Once { at: DateTime<Utc> },
-    OnceLocal { date_time: NaiveDateTime },
-    Weekly { rule: crate::weekly::Weekly },
+    Once {
+        at: DateTime<Utc>,
+    },
+    Interval {
+        anchor_utc: DateTime<Utc>,
+        period_seconds: i64,
+    },
+    OnceLocal {
+        date_time: NaiveDateTime,
+    },
+    Weekly {
+        rule: crate::weekly::Weekly,
+    },
 }
 impl Schedule {
     pub fn next_after(&self, after: DateTime<Utc>, _clock: &dyn Clock) -> Option<DateTime<Utc>> {
         let at = match self {
             Self::Once { at } => Some(*at),
+            Self::Interval {
+                anchor_utc,
+                period_seconds,
+            } => return crate::interval::next_after(*anchor_utc, *period_seconds, after),
             Self::OnceLocal { date_time } => _clock.resolve_local(*date_time).into_iter().min(),
             Self::Weekly { rule } => rule.next_after(after, _clock, None),
         };
@@ -98,6 +113,10 @@ impl Schedule {
     pub fn description(&self, clock: &dyn Clock) -> String {
         let local = match self {
             Self::Once { at } => clock.local_at(*at),
+            Self::Interval {
+                anchor_utc,
+                period_seconds,
+            } => return crate::interval::description(*anchor_utc, *period_seconds, clock),
             Self::OnceLocal { date_time } => *date_time,
             Self::Weekly { rule } => return rule.description(),
         };
@@ -110,6 +129,7 @@ impl Schedule {
         match self {
             Self::Once { at } => *at <= now,
             Self::Weekly { .. } => false,
+            Self::Interval { .. } => false,
             Self::OnceLocal { date_time } => clock
                 .resolve_local(*date_time)
                 .into_iter()
@@ -123,6 +143,11 @@ impl Schedule {
 pub enum ScheduleInput {
     AfterSeconds {
         seconds: i64,
+    },
+    Interval {
+        seconds: i64,
+        #[serde(default)]
+        start_local: Option<NaiveDateTime>,
     },
     AtLocal {
         date_time: NaiveDateTime,
@@ -154,6 +179,10 @@ impl ScheduleInput {
                     context.submitted_local.date(),
                 )?,
             },
+            Self::Interval {
+                seconds,
+                start_local,
+            } => crate::interval::resolve(seconds, start_local, clock)?,
             Self::AfterSeconds { seconds } => {
                 ensure!(seconds > 0, "Укажите положительное время до напоминания");
                 Schedule::Once {
@@ -187,7 +216,7 @@ impl ScheduleInput {
         Ok(schedule)
     }
 }
-fn resolve_unique(clock: &dyn Clock, local: NaiveDateTime) -> Result<DateTime<Utc>> {
+pub(crate) fn resolve_unique(clock: &dyn Clock, local: NaiveDateTime) -> Result<DateTime<Utc>> {
     let candidates = clock.resolve_local(local);
     ensure!(
         candidates.len() == 1,
@@ -272,6 +301,7 @@ pub struct Application {
     pub(crate) toasts: Vec<ToastSnapshot>,
     pub(crate) last: TimeSample,
     pub(crate) sequence: u64,
+    pub(crate) eligible_after: HashMap<ReminderId, DateTime<Utc>>,
 }
 impl Application {
     pub fn open(clock: Arc<dyn Clock>, store: Box<dyn ReminderStore>) -> Result<Self> {
@@ -284,6 +314,7 @@ impl Application {
             toasts: vec![],
             last,
             sequence: 0,
+            eligible_after: HashMap::new(),
         };
         app.resume()?;
         Ok(app)
@@ -300,8 +331,15 @@ impl Application {
     pub fn signal_active(&self) -> bool {
         self.toasts.iter().any(|t| t.sound)
     }
+    pub(crate) fn skip_through(&mut self, id: ReminderId, now: DateTime<Utc>) {
+        let after = self.eligible_after.entry(id).or_insert(now);
+        *after = (*after).max(now);
+    }
     pub fn close_toast(&mut self, id: ReminderId) {
-        self.toasts.retain(|t| t.reminder_id != id);
+        if self.toasts.iter().any(|t| t.reminder_id == id) {
+            self.skip_through(id, self.clock.sample().utc);
+            self.toasts.retain(|t| t.reminder_id != id);
+        }
     }
     pub fn create(&mut self, input: CreateReminder, context: &CommandContext) -> Result<Reminder> {
         let schedule = input.schedule.resolve(context, self.clock())?;
@@ -332,6 +370,7 @@ impl Application {
         next.reminders.push(reminder.clone());
         self.store.save(&next)?;
         self.state = next;
+        self.skip_through(id, self.clock.sample().utc);
         Ok(reminder)
     }
     /// After startup or suspension, elapsed occurrences are consumed without a toast.
@@ -371,13 +410,22 @@ impl Application {
         }
         let mut next = self.state.clone();
         let mut snapshots = Vec::new();
+        let mut consumed = Vec::new();
         for reminder in &mut next.reminders {
             if reminder.paused || reminder.completed {
                 continue;
             }
             let due = reminder
                 .schedule
-                .next_after_cursor(self.last.utc, self.clock(), reminder.calendar_cursor)
+                .next_after_cursor(
+                    self.eligible_after
+                        .get(&reminder.id)
+                        .copied()
+                        .unwrap_or(self.last.utc)
+                        .max(self.last.utc),
+                    self.clock(),
+                    reminder.calendar_cursor,
+                )
                 .filter(|at| *at <= now.utc);
             if let Some(at) = due {
                 if reminder.schedule.is_calendar_repeating() {
@@ -388,6 +436,7 @@ impl Application {
                             .map_or(consumed, |cursor| cursor.max(consumed)),
                     );
                 }
+                consumed.push(reminder.id);
                 reminder.completed = reminder.schedule.ended_at(now.utc, self.clock());
                 if !self.toasts.iter().any(|t| t.reminder_id == reminder.id) {
                     snapshots.push(ToastSnapshot {
@@ -405,6 +454,9 @@ impl Application {
         if next.reminders != self.state.reminders {
             self.store.save(&next)?;
             self.state = next;
+        }
+        for id in consumed {
+            self.skip_through(id, now.utc);
         }
         for mut snapshot in snapshots {
             self.sequence += 1;
