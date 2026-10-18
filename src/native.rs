@@ -88,21 +88,32 @@ pub fn square_corners(window: &Window) {
     }
 }
 
-pub fn place_toast(window: &Window, x: i32, y: i32, width: i32, height: i32) -> Result<()> {
+pub fn place_toast(
+    window: &Window,
+    cx: &gpui::App,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+) -> Result<gpui::Task<Result<()>>> {
     square_corners(window);
     let handle = hwnd(window)?;
-    unsafe {
-        let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
-        SetWindowLongPtrW(handle, GWL_EXSTYLE, style | WS_EX_NOACTIVATE.0 as isize);
-        SetWindowPos(
-            handle,
-            Some(HWND_TOPMOST),
-            x,
-            y,
-            width,
-            height,
-            SWP_NOACTIVATE | SWP_SHOWWINDOW,
-        )?;
-    }
-    Ok(())
+    // SetWindowPos sends WM_SIZE synchronously. Run it outside App/Window updates
+    // so GPUI can enter its resize callback and update the layout before drawing.
+    Ok(cx.foreground_executor().spawn(async move {
+        unsafe {
+            let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+            SetWindowLongPtrW(handle, GWL_EXSTYLE, style | WS_EX_NOACTIVATE.0 as isize);
+            SetWindowPos(
+                handle,
+                Some(HWND_TOPMOST),
+                x,
+                y,
+                width,
+                height,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            )?;
+        }
+        Ok(())
+    }))
 }

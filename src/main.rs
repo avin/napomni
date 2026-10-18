@@ -156,14 +156,24 @@ fn show_demo(cx: &mut App) -> Result<()> {
             },
         )?;
         let placement = handle
-            .update(cx, |_, window, _| {
-                native::place_toast(window, x, y, width, height)
+            .update(cx, |_, window, cx| {
+                native::place_toast(window, cx, x, y, width, height)
             })
             .and_then(|result| result);
-        if let Err(error) = placement {
-            let _ = handle.update(cx, |_, window, _| window.remove_window());
-            return Err(error);
-        }
+        let placement = match placement {
+            Ok(placement) => placement,
+            Err(error) => {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+                return Err(error);
+            }
+        };
+        cx.spawn(async move |cx| {
+            if let Err(error) = placement.await {
+                let _ = handle.update(cx, |_, window, _| window.remove_window());
+                eprintln!("Не удалось разместить тост: {error:#}");
+            }
+        })
+        .detach();
         cx.global_mut::<Desktop>().toasts.push(handle);
     }
     Ok(())
