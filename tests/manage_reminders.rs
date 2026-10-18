@@ -310,3 +310,78 @@ fn recurring_resume_and_undo_skip_elapsed_grid_points_only_for_the_affected_reco
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, id);
 }
+
+#[test]
+fn editing_time_after_clock_rollback_allows_the_new_future_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::new());
+    let mut app = Application::open(
+        clock.clone(),
+        Box::new(JsonStore::new(directory.path().join("data.json"))),
+    )
+    .unwrap();
+    let id = create(&mut app, clock.as_ref(), 60);
+    clock.advance(60);
+    app.tick().unwrap();
+    app.close_toast(id);
+    clock.0.lock().unwrap().utc -= Duration::seconds(60);
+    app.tick().unwrap();
+    app.update(
+        id,
+        ReminderPatch {
+            schedule: Some(ScheduleInput::AfterSeconds { seconds: 30 }),
+            ..Default::default()
+        },
+        &CommandContext::capture(clock.as_ref(), "Через30 секунд", Some(id)),
+    )
+    .unwrap();
+    clock.advance(30);
+    app.tick().unwrap();
+    assert_eq!(app.open_toasts().len(), 1);
+}
+
+#[test]
+fn undo_of_calendar_property_edit_keeps_occurrences_consumed_since_the_edit() {
+    let directory = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::new());
+    let path = directory.path().join("data.json");
+    let mut app = Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap();
+    let schedule=serde_json::from_value(serde_json::json!({"kind":"weekly","weekdays":[7],"times":["09:01:00","09:02:00"],"every_n_weeks":1})).unwrap();
+    let context = CommandContext::capture(clock.as_ref(), "Создай", None);
+    let id = app
+        .create(
+            CreateReminder {
+                text: "Календарное".into(),
+                schedule,
+                border: None,
+                sound: None,
+            },
+            &context,
+        )
+        .unwrap()
+        .id;
+    app.update(
+        id,
+        ReminderPatch {
+            sound: Some(false),
+            ..Default::default()
+        },
+        &CommandContext::capture(clock.as_ref(), "Без звука", Some(id)),
+    )
+    .unwrap();
+    for _ in 0..2 {
+        clock.advance(60);
+        app.tick().unwrap();
+        assert_eq!(app.open_toasts().len(), 1);
+        app.close_toast(id);
+    }
+    app.undo().unwrap();
+    assert!(app.reminders()[0].sound);
+    clock.0.lock().unwrap().utc -= Duration::minutes(2);
+    let mut app = Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap();
+    for _ in 0..2 {
+        clock.advance(60);
+        app.tick().unwrap();
+        assert!(app.open_toasts().is_empty());
+    }
+}

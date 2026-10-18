@@ -71,6 +71,7 @@ impl Application {
             .schedule
             .ended_at(self.clock.sample().utc, self.clock());
         let saved = reminder.clone();
+        let schedule_changed = saved.schedule != before.schedule;
         if saved != before {
             self.commit_change(
                 next,
@@ -80,6 +81,9 @@ impl Application {
                     index,
                 },
             )?;
+            if schedule_changed {
+                self.eligible_after.insert(id, self.clock.sample().utc);
+            }
         }
         Ok(saved)
     }
