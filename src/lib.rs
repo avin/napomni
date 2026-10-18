@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod chat;
+mod interval;
 mod mutation_tools;
 pub mod mutations;
 pub mod placement;
