@@ -17,6 +17,7 @@ pub struct UndoEntry {
 pub struct ReminderPatch {
     pub text: Option<String>,
     pub schedule: Option<ScheduleInput>,
+    pub limits: Option<crate::constraints::Constraints>,
     pub border: Option<u32>,
     pub sound: Option<bool>,
 }
@@ -34,6 +35,7 @@ impl Application {
         ensure!(
             patch.text.is_some()
                 || patch.schedule.is_some()
+                || patch.limits.is_some()
                 || patch.border.is_some()
                 || patch.sound.is_some(),
             "Укажите свойство для изменения"
@@ -59,6 +61,14 @@ impl Application {
             reminder.schedule = schedule.resolve(context, self.clock())?;
             reminder.completed = false;
             reminder.calendar_cursor = None;
+        }
+        if let Some(limits) = patch.limits {
+            reminder.schedule = limits.apply_to(
+                reminder.schedule.clone(),
+                self.clock.sample().utc,
+                self.clock(),
+            )?;
+            reminder.completed = false;
         }
         if let Some(border) = patch.border {
             ensure!(border <= 0xffffff, "Цвет должен быть RGB от 0 до 16777215");
