@@ -23,7 +23,6 @@ use tray_icon::{
 struct Desktop {
     _tray: TrayIcon,
     main: WindowHandle<ui::MainWindow>,
-    demo_pending: bool,
 }
 
 impl Global for Desktop {}
@@ -68,25 +67,14 @@ fn open_main(cx: &mut App) {
 }
 
 fn schedule_demo(cx: &mut App) {
-    if cx.global::<Desktop>().demo_pending {
-        return;
-    }
-    cx.global_mut::<Desktop>().demo_pending = true;
-    cx.spawn(async |cx| {
-        cx.background_executor().timer(Duration::from_secs(5)).await;
-        let _ = cx.update(|cx| {
-            cx.global_mut::<Desktop>().demo_pending = false;
-            if let Err(error) = show_demo(cx) {
-                eprintln!("Не удалось показать тосты: {error:#}");
-                let message = format!("Не удалось показать тестовые тосты: {error:#}");
-                let _ = cx.open_window(WindowOptions::default(), |window, cx| {
-                    native::square_corners(window);
-                    cx.new(|_| ErrorView(message))
-                });
-            }
+    if let Err(error) = show_demo(cx) {
+        eprintln!("Не удалось показать тосты: {error:#}");
+        let message = format!("Не удалось показать тестовые тосты: {error:#}");
+        let _ = cx.open_window(WindowOptions::default(), |window, cx| {
+            native::square_corners(window);
+            cx.new(|_| ErrorView(message))
         });
-    })
-    .detach();
+    }
 }
 
 fn show_demo(cx: &mut App) -> Result<()> {
@@ -140,7 +128,6 @@ fn main() {
             cx.set_global(Desktop {
                 _tray: tray,
                 main,
-                demo_pending: false,
             });
             cx.spawn(async |cx| {
                 loop {

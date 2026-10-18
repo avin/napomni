@@ -2,16 +2,17 @@ use anyhow::{Result, bail};
 use gpui::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::{
-    Foundation::HWND,
+    Foundation::{HWND, POINT, RECT},
     Graphics::{
         Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute},
-        Gdi::{GetMonitorInfoW, MONITORINFO},
+        Gdi::{ClientToScreen, GetMonitorInfoW, MONITORINFO},
     },
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
         WindowsAndMessaging::{
-            GWL_EXSTYLE, GetWindowLongPtrW, HWND_TOPMOST, SW_HIDE, SW_SHOW, SWP_NOACTIVATE,
-            SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, ShowWindow, WS_EX_NOACTIVATE,
+            GWL_EXSTYLE, GetClientRect, GetWindowLongPtrW, GetWindowRect, HWND_TOPMOST, SW_HIDE,
+            SW_SHOW, SWP_NOACTIVATE, SWP_SHOWWINDOW, SetWindowLongPtrW, SetWindowPos, ShowWindow,
+            WS_EX_NOACTIVATE,
         },
     },
 };
@@ -164,6 +165,24 @@ pub fn square_corners(window: &Window) {
     }
 }
 
+/// GPUI retains non-client insets even for a popup without a title bar.
+fn client_insets(handle: HWND) -> Result<RECT> {
+    unsafe {
+        let mut client = RECT::default();
+        let mut outer = RECT::default();
+        let mut origin = POINT::default();
+        GetClientRect(handle, &mut client)?;
+        GetWindowRect(handle, &mut outer)?;
+        ClientToScreen(handle, &mut origin).ok()?;
+        Ok(RECT {
+            left: origin.x - outer.left,
+            top: origin.y - outer.top,
+            right: outer.right - origin.x - (client.right - client.left),
+            bottom: outer.bottom - origin.y - (client.bottom - client.top),
+        })
+    }
+}
+
 pub fn place_toast(
     window: &Window,
     cx: &gpui::App,
@@ -180,6 +199,7 @@ pub fn place_toast(
         unsafe {
             let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
             SetWindowLongPtrW(handle, GWL_EXSTYLE, style | WS_EX_NOACTIVATE.0 as isize);
+            // First move to the target monitor so WM_DPICHANGED updates its insets.
             SetWindowPos(
                 handle,
                 Some(HWND_TOPMOST),
@@ -187,6 +207,17 @@ pub fn place_toast(
                 y,
                 width,
                 height,
+                SWP_NOACTIVATE,
+            )?;
+            let insets = client_insets(handle)?;
+            // Placement describes the drawable client area, not the outer HWND.
+            SetWindowPos(
+                handle,
+                Some(HWND_TOPMOST),
+                x - insets.left,
+                y - insets.top,
+                width + insets.left + insets.right,
+                height + insets.top + insets.bottom,
                 SWP_NOACTIVATE | SWP_SHOWWINDOW,
             )?;
         }
@@ -208,10 +239,14 @@ pub fn toast_region(
     // SetWindowRgn also sends window-position messages synchronously.
     Ok(cx.foreground_executor().spawn(async move {
         unsafe {
+            // SetWindowRgn takes window coordinates; card rectangles use client coordinates.
+            let insets = client_insets(handle)?;
             let region = CreateRectRgn(0, 0, 0, 0);
             anyhow::ensure!(!region.0.is_null(), "Не удалось создать область стопки");
             for rect in rectangles {
-                let part = CreateRectRgn(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
+                let left = rect.x + insets.left;
+                let top = rect.y + insets.top;
+                let part = CreateRectRgn(left, top, left + rect.width, top + rect.height);
                 if part.0.is_null() {
                     let _ = DeleteObject(HGDIOBJ(region.0));
                     bail!("Не удалось создать область карточки");
