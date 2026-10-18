@@ -108,7 +108,7 @@ fn edit_pause_delete_and_undo_preserve_the_open_toast_snapshot() {
     app.set_paused(id, true).unwrap();
     app.delete(id).unwrap();
     assert!(app.reminders().is_empty());
-    assert_eq!(app.open_toasts(), &[snapshot.clone()]);
+    assert_eq!(app.open_toasts(), std::slice::from_ref(&snapshot));
     assert!(app.signal_active());
     app.undo().unwrap();
     assert_eq!(app.reminders()[0].id, id);
