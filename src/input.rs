@@ -2,11 +2,11 @@
 use std::ops::Range;
 
 use gpui::{
-    App, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler, Entity,
-    EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine,
-    SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, actions, div, fill, hsla,
-    point, prelude::*, px, relative, rgb, rgba, size, white,
+    App, Bounds, ClipboardItem, ContentMask, Context, CursorStyle, ElementId, ElementInputHandler,
+    Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
+    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window,
+    WindowAppearance, actions, div, fill, point, prelude::*, px, relative, rgb, rgba, size,
 };
 use unicode_segmentation::*;
 
@@ -40,6 +40,38 @@ pub struct TextInput {
     last_layout: Option<ShapedLine>,
     last_bounds: Option<Bounds<Pixels>>,
     is_selecting: bool,
+    scroll_x: Pixels,
+}
+
+struct InputColors {
+    background: u32,
+    text: u32,
+    placeholder: u32,
+    caret: u32,
+    selection: u32,
+    border: u32,
+}
+impl InputColors {
+    fn for_window(window: &Window) -> Self {
+        match window.appearance() {
+            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self {
+                background: 0x202329,
+                text: 0xf3f4f6,
+                placeholder: 0xb1b8c4,
+                caret: 0x82aaff,
+                selection: 0x5285f560,
+                border: 0x566071,
+            },
+            _ => Self {
+                background: 0xffffff,
+                text: 0x20242c,
+                placeholder: 0x5e6878,
+                caret: 0x365edc,
+                selection: 0x5285f545,
+                border: 0xb8c0ce,
+            },
+        }
+    }
 }
 
 impl TextInput {
@@ -172,13 +204,16 @@ impl TextInput {
         else {
             return 0;
         };
+        if line.text != self.content {
+            return self.cursor_offset();
+        }
         if position.y < bounds.top() {
             return 0;
         }
         if position.y > bounds.bottom() {
             return self.content.len();
         }
-        line.closest_index_for_x(position.x - bounds.left())
+        line.closest_index_for_x(position.x - bounds.left() + self.scroll_x)
     }
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
@@ -195,18 +230,7 @@ impl TextInput {
     }
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
-        let mut utf8_offset = 0;
-        let mut utf16_count = 0;
-
-        for ch in self.content.chars() {
-            if utf16_count >= offset {
-                break;
-            }
-            utf16_count += ch.len_utf16();
-            utf8_offset += ch.len_utf8();
-        }
-
-        utf8_offset
+        utf8_offset_for_utf16(&self.content, offset)
     }
 
     fn offset_to_utf16(&self, offset: usize) -> usize {
@@ -255,6 +279,7 @@ impl TextInput {
         self.last_layout = None;
         self.last_bounds = None;
         self.is_selecting = false;
+        self.scroll_x = px(0.);
     }
 }
 
@@ -342,8 +367,10 @@ impl EntityInputHandler for TextInput {
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
-            .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.start)
+            .map(|selected| {
+                range.start + utf8_offset_for_utf16(new_text, selected.start)
+                    ..range.start + utf8_offset_for_utf16(new_text, selected.end)
+            })
             .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
 
         cx.notify();
@@ -357,14 +384,19 @@ impl EntityInputHandler for TextInput {
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
         let last_layout = self.last_layout.as_ref()?;
+        if !self.content.is_empty() && last_layout.text != self.content {
+            return None;
+        }
         let range = self.range_from_utf16(&range_utf16);
         Some(Bounds::from_corners(
             point(
-                bounds.left() + last_layout.x_for_index(range.start),
+                (bounds.left() + last_layout.x_for_index(range.start) - self.scroll_x)
+                    .clamp(bounds.left(), bounds.right()),
                 bounds.top(),
             ),
             point(
-                bounds.left() + last_layout.x_for_index(range.end),
+                (bounds.left() + last_layout.x_for_index(range.end) - self.scroll_x)
+                    .clamp(bounds.left(), bounds.right()),
                 bounds.bottom(),
             ),
         ))
@@ -377,10 +409,15 @@ impl EntityInputHandler for TextInput {
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
         let line_point = self.last_bounds?.localize(&point)?;
+        if self.content.is_empty() {
+            return Some(0);
+        }
         let last_layout = self.last_layout.as_ref()?;
 
-        assert_eq!(last_layout.text, self.content);
-        let utf8_index = last_layout.index_for_x(point.x - line_point.x)?;
+        if last_layout.text != self.content {
+            return None;
+        }
+        let utf8_index = last_layout.closest_index_for_x(line_point.x + self.scroll_x);
         Some(self.offset_to_utf16(utf8_index))
     }
 }
@@ -393,6 +430,7 @@ struct PrepaintState {
     line: Option<ShapedLine>,
     cursor: Option<PaintQuad>,
     selection: Option<PaintQuad>,
+    line_origin: Point<Pixels>,
 }
 
 impl IntoElement for TextElement {
@@ -441,10 +479,14 @@ impl Element for TextElement {
         let content = input.content.clone();
         let selected_range = input.selected_range.clone();
         let cursor = input.cursor_offset();
+        let previous_scroll = input.scroll_x;
+        let marked_range = input.marked_range.clone();
         let style = window.text_style();
+        let colors = InputColors::for_window(window);
+        let empty = content.is_empty();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), hsla(0., 0., 0., 0.55))
+            (input.placeholder.clone(), rgb(colors.placeholder).into())
         } else {
             (content, style.color)
         };
@@ -457,7 +499,7 @@ impl Element for TextElement {
             underline: None,
             strikethrough: None,
         };
-        let runs = if let Some(marked_range) = input.marked_range.as_ref() {
+        let runs = if let Some(marked_range) = marked_range.as_ref() {
             vec![
                 TextRun {
                     len: marked_range.start,
@@ -490,15 +532,37 @@ impl Element for TextElement {
             .shape_line(display_text, font_size, &runs, None);
 
         let cursor_pos = line.x_for_index(cursor);
+        let visible_width = (bounds.size.width - px(2.)).max(px(0.));
+        let max_scroll = if empty {
+            px(0.)
+        } else {
+            (line.width - visible_width).max(px(0.))
+        };
+        let mut scroll_x = previous_scroll.clamp(px(0.), max_scroll);
+        let visible_range = marked_range.as_ref().unwrap_or(&selected_range);
+        let range_start = line.x_for_index(visible_range.start);
+        let range_end = line.x_for_index(visible_range.end);
+        let (visible_start, visible_end) = if range_end - range_start <= visible_width {
+            (range_start, range_end)
+        } else {
+            (cursor_pos, cursor_pos)
+        };
+        if visible_start < scroll_x {
+            scroll_x = visible_start;
+        } else if visible_end > scroll_x + visible_width {
+            scroll_x = visible_end - visible_width;
+        }
+        let line_origin = point(bounds.left() - scroll_x, bounds.top());
+        self.input.update(cx, |input, _| input.scroll_x = scroll_x);
         let (selection, cursor) = if selected_range.is_empty() {
             (
                 None,
                 Some(fill(
                     Bounds::new(
-                        point(bounds.left() + cursor_pos, bounds.top()),
+                        point(line_origin.x + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
-                    gpui::blue(),
+                    rgb(colors.caret),
                 )),
             )
         } else {
@@ -506,15 +570,15 @@ impl Element for TextElement {
                 Some(fill(
                     Bounds::from_corners(
                         point(
-                            bounds.left() + line.x_for_index(selected_range.start),
+                            line_origin.x + line.x_for_index(selected_range.start),
                             bounds.top(),
                         ),
                         point(
-                            bounds.left() + line.x_for_index(selected_range.end),
+                            line_origin.x + line.x_for_index(selected_range.end),
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x3311ff30),
+                    rgba(colors.selection),
                 )),
                 None,
             )
@@ -523,6 +587,7 @@ impl Element for TextElement {
             line: Some(line),
             cursor,
             selection,
+            line_origin,
         }
     }
 
@@ -542,18 +607,19 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
-        if let Some(selection) = prepaint.selection.take() {
-            window.paint_quad(selection)
-        }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
-
-        if focus_handle.is_focused(window)
-            && let Some(cursor) = prepaint.cursor.take()
-        {
-            window.paint_quad(cursor);
-        }
+        window.with_content_mask(Some(ContentMask { bounds }), |window| {
+            if let Some(selection) = prepaint.selection.take() {
+                window.paint_quad(selection);
+            }
+            line.paint(prepaint.line_origin, window.line_height(), window, cx)
+                .unwrap();
+            if focus_handle.is_focused(window)
+                && let Some(cursor) = prepaint.cursor.take()
+            {
+                window.paint_quad(cursor);
+            }
+        });
 
         self.input.update(cx, |input, _cx| {
             input.last_layout = Some(line);
@@ -563,9 +629,12 @@ impl Element for TextElement {
 }
 
 impl Render for TextInput {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = InputColors::for_window(window);
         div()
             .flex()
+            .w_full()
+            .min_w_0()
             .overflow_hidden()
             .key_context("TextInput")
             .track_focus(&self.focus_handle(cx))
@@ -589,13 +658,15 @@ impl Render for TextInput {
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .line_height(px(30.))
             .text_size(px(14.))
-            .text_color(rgb(0x20242c))
+            .text_color(rgb(colors.text))
+            .border_1()
+            .border_color(rgb(colors.border))
             .child(
                 div()
                     .h(px(30. + 4. * 2.))
                     .w_full()
                     .p(px(4.))
-                    .bg(white())
+                    .bg(rgb(colors.background))
                     .child(TextElement { input: cx.entity() }),
             )
     }
@@ -623,6 +694,7 @@ impl TextInput {
             last_layout: None,
             last_bounds: None,
             is_selecting: false,
+            scroll_x: px(0.),
         }
     }
     pub fn value(&self) -> &str {
@@ -633,6 +705,18 @@ impl TextInput {
         self.content = value.into();
         cx.notify();
     }
+}
+fn utf8_offset_for_utf16(text: &str, offset: usize) -> usize {
+    let mut utf8_offset = 0;
+    let mut utf16_count = 0;
+    for ch in text.chars() {
+        if utf16_count >= offset {
+            break;
+        }
+        utf16_count += ch.len_utf16();
+        utf8_offset += ch.len_utf8();
+    }
+    utf8_offset
 }
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([

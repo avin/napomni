@@ -1,7 +1,7 @@
 //! Durable tool receipts scoped to a trusted user command, independent of provider IDs.
 use crate::{
     reminder_tools::execute_tool,
-    reminders::{Application, CommandContext, Persisted, ReminderStore},
+    reminders::{Application, CommandContext},
 };
 use anyhow::{Result, ensure};
 use async_openai::types::ChatCompletionRequestMessage;
@@ -47,15 +47,6 @@ pub struct ToolReceipt {
     pub result: Value,
     pub order: u64,
 }
-struct StagedStore;
-impl ReminderStore for StagedStore {
-    fn load(&self) -> Result<Persisted> {
-        Ok(Persisted::default())
-    }
-    fn save(&self, _: &Persisted) -> Result<()> {
-        Ok(())
-    }
-}
 pub fn execute_tool_once(
     app: &mut Application,
     call_id: &str,
@@ -77,32 +68,17 @@ pub fn execute_tool_once(
         );
         return Ok(receipt.result.clone());
     }
-    // Existing public operations stage their own changes against a memory-only
-    // store. Publish their complete result and receipt in one real storage write.
-    let mut staged = Application {
-        clock: app.clock.clone(),
-        store: Box::new(StagedStore),
-        state: app.state.clone(),
-        toasts: app.toasts.clone(),
-        last: app.last,
-        sequence: app.sequence,
-        eligible_after: app.eligible_after.clone(),
-    };
-    let result = execute_tool(&mut staged, name, arguments, context)?;
-    let receipt = ToolReceipt {
-        command_id: context.id,
-        call_id: call_id.into(),
-        name: name.into(),
-        arguments: parsed,
-        result: result.clone(),
-        order: u64::try_from(staged.state.tool_receipts.len())?,
-    };
-    staged.state.tool_receipts.insert(key, receipt);
-    app.store.save(&staged.state)?;
-    app.state = staged.state;
-    app.toasts = staged.toasts;
-    app.last = staged.last;
-    app.sequence = staged.sequence;
-    app.eligible_after = staged.eligible_after;
-    Ok(result)
+    app.transaction(|staged| {
+        let result = execute_tool(staged, name, arguments, context)?;
+        let receipt = ToolReceipt {
+            command_id: context.id,
+            call_id: call_id.into(),
+            name: name.into(),
+            arguments: parsed,
+            result: result.clone(),
+            order: u64::try_from(staged.state.tool_receipts.len())?,
+        };
+        staged.state.tool_receipts.insert(key, receipt);
+        Ok(result)
+    })
 }
