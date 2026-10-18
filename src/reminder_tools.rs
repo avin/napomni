@@ -197,11 +197,11 @@ pub async fn resume_command_with_progress(
             };
             let value = match result {
                 Ok(value) => {
-                    if let Some(fact) = value.get("fact").and_then(Value::as_str) {
-                        if !outcome.facts.iter().any(|existing| existing == fact) {
-                            committed(fact);
-                            outcome.facts.push(fact.into());
-                        }
+                    if let Some(fact) = value.get("fact").and_then(Value::as_str)
+                        && !outcome.facts.iter().any(|existing| existing == fact)
+                    {
+                        committed(fact);
+                        outcome.facts.push(fact.into());
                     }
                     value
                 }

@@ -97,6 +97,14 @@ fn pending_typed_command_survives_restart_without_api_key_in_chat_artifacts() {
     );
     recovery.messages.push(serde_json::from_value(json!({"role":"assistant","content":null,"tool_calls":[{"id":"binding-1","type":"function","function":{"name":"create_reminder","arguments":json!({"text":"secret-key","metadata":{"name":"secret-key"}}).to_string()}}]})).unwrap());
     recovery.messages.push(serde_json::from_value(json!({"role":"tool","tool_call_id":"binding-1","content":json!({"name":"secret-key","nested":["secret-key"]}).to_string()})).unwrap());
+    chat.save_connection(Connection {
+        base_url: "http://localhost/v1".into(),
+        api_key: "replacement-key".into(),
+        model: "test".into(),
+    })
+    .unwrap();
+    chat.record_assistant("Поздний ответ старого запроса: secret-key; новый replacement-key")
+        .unwrap();
     chat.save_pending(Some(recovery)).unwrap();
     let mut reopened = ChatSession::open(directory.path()).unwrap();
     let pending = reopened.pending().unwrap();
@@ -109,6 +117,11 @@ fn pending_typed_command_survives_restart_without_api_key_in_chat_artifacts() {
             .contains("secret-key")
     );
     for file in ["chat.json", "pending-command.json"] {
+        assert!(
+            !std::fs::read_to_string(directory.path().join(file))
+                .unwrap()
+                .contains("replacement-key")
+        );
         assert!(
             !std::fs::read_to_string(directory.path().join(file))
                 .unwrap()
@@ -216,4 +229,47 @@ fn replay_does_not_repeat_pause_delete_or_undo_after_later_user_operations() {
     app.set_paused(1, true).unwrap();
     execute_tool_once(&mut app, "undo", "undo_last_operation", "{}", &undo).unwrap();
     assert!(app.reminders()[0].paused);
+}
+
+#[test]
+fn rejected_tool_calls_leave_records_and_last_undo_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = Application::open(
+        Arc::new(SystemClock),
+        Box::new(JsonStore::new(directory.path().join("data.json"))),
+    )
+    .unwrap();
+    let context = CommandContext::capture(app.clock(), "Создай", None);
+    execute_tool_once(
+        &mut app,
+        "create",
+        "create_reminder",
+        &json!({"text":"Вода","schedule":{"kind":"after_seconds","seconds":1200}}).to_string(),
+        &context,
+    )
+    .unwrap();
+    let before = app.reminders().to_vec();
+    for (id, name, args) in [
+        ("bad-json", "create_reminder", "{"),
+        (
+            "unknown",
+            "update_reminder",
+            "{\"id\":999,\"patch\":{\"sound\":false}}",
+        ),
+        (
+            "unsupported",
+            "create_reminder",
+            "{\"text\":\"Нельзя\",\"schedule\":{\"kind\":\"business_holidays\"}}",
+        ),
+        (
+            "invalid",
+            "update_reminder",
+            "{\"id\":1,\"patch\":{\"text\":\"\"}}",
+        ),
+    ] {
+        assert!(execute_tool_once(&mut app, id, name, args, &context).is_err());
+        assert_eq!(app.reminders(), before.as_slice());
+    }
+    app.undo().unwrap();
+    assert!(app.reminders().is_empty());
 }

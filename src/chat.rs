@@ -42,6 +42,7 @@ pub struct ChatSession {
     connection: Connection,
     messages: Vec<Message>,
     pending: Option<crate::commands::CommandRecovery>,
+    redaction_keys: Vec<String>,
 }
 impl ChatSession {
     pub fn default_directory() -> PathBuf {
@@ -61,8 +62,11 @@ impl ChatSession {
                 Err(e) => Err(e.into()),
             }
         }
+        let connection: Connection = read(directory.join("connection.json"))?;
+        let redaction_keys = vec![connection.api_key.clone()];
         Ok(Self {
-            connection: read(directory.join("connection.json"))?,
+            connection,
+            redaction_keys,
             messages: read(directory.join("chat.json"))?,
             pending: read(directory.join("pending-command.json"))?,
             directory,
@@ -82,8 +86,8 @@ impl ChatSession {
         pending: Option<crate::commands::CommandRecovery>,
     ) -> Result<()> {
         let mut value = serde_json::to_value(pending)?;
-        if !self.connection.api_key.is_empty() {
-            redact_chat_value(&mut value, &self.connection.api_key, None);
+        for key in self.redaction_keys.iter().filter(|key| !key.is_empty()) {
+            redact_chat_value(&mut value, key, None);
         }
         let pending = serde_json::from_value(value.clone())?;
         let prepared = self.directory.join("pending-command.pending");
@@ -103,6 +107,9 @@ impl ChatSession {
             serde_json::to_vec_pretty(&connection)?,
         )
         .context("Не удалось сохранить подключение")?;
+        if !self.redaction_keys.contains(&connection.api_key) {
+            self.redaction_keys.push(connection.api_key.clone());
+        }
         self.connection = connection;
         Ok(())
     }
@@ -123,11 +130,13 @@ impl ChatSession {
     }
     fn record(&mut self, role: &str, text: &str) -> Result<()> {
         let mut messages = self.messages.clone();
-        let content = if self.connection.api_key.is_empty() {
-            text.to_owned()
-        } else {
-            text.replace(&self.connection.api_key, "[ключ скрыт]")
-        };
+        let content = self
+            .redaction_keys
+            .iter()
+            .filter(|key| !key.is_empty())
+            .fold(text.to_owned(), |text, key| {
+                text.replace(key, "[ключ скрыт]")
+            });
         messages.push(Message {
             role: role.into(),
             content,
