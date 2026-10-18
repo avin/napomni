@@ -25,6 +25,7 @@ enum Source {
 struct Stacks {
     live: Option<WindowHandle<ToastStack>>,
     demo: Option<WindowHandle<ToastStack>>,
+    demo_sequence: u64,
 }
 impl Global for Stacks {}
 
@@ -48,12 +49,14 @@ pub fn show_demo(cx: &mut App) -> anyhow::Result<()> {
     if old.is_some_and(|handle| handle.read(cx).is_ok_and(|view| !view.snapshots.is_empty())) {
         return Ok(());
     }
+    let sequence = cx.global::<Stacks>().demo_sequence;
+    cx.global_mut::<Stacks>().demo_sequence = sequence.wrapping_add(3);
     let snapshots = [
         ("Пора размяться. Встаньте, расправьте плечи и посмотрите вдаль. Ёжик тоже делает перерыв!", 0x5285f5),
         ("Стакан воды. Небольшая пауза: налейте воды и отдохните от экрана.", 0x29a879),
         ("Проверка русского текста. Съешь ещё этих мягких французских булок, да выпей чаю. 0123456789", 0xb17bea),
     ].into_iter().enumerate().map(|(index, (text, border))| ToastSnapshot {
-        reminder_id: index as u64, text: text.into(), border, sound: false, sequence: index as u64,
+        reminder_id: sequence + index as u64, text: text.into(), border, sound: false, sequence: sequence + index as u64,
     }).collect();
     let handle = update(old, snapshots, Source::Demo, cx)?;
     cx.global_mut::<Stacks>().demo = handle;
@@ -62,16 +65,27 @@ pub fn show_demo(cx: &mut App) -> anyhow::Result<()> {
 
 /// This is only called by an explicit tray action, never by a new occurrence.
 pub fn focus(cx: &mut App) {
-    let handle = cx.global::<Stacks>().live.or(cx.global::<Stacks>().demo);
-    if let Some(handle) = handle {
-        let _ = handle.update(cx, |view, window, cx| {
-            native::toast_allow_focus(window, true);
-            window.activate_window();
-            view.focus.focus(window);
-            view.keyboard = true;
-            view.expanded = true;
-            cx.notify();
-        });
+    for handle in [cx.global::<Stacks>().live, cx.global::<Stacks>().demo]
+        .into_iter()
+        .flatten()
+    {
+        if handle
+            .update(cx, |view, window, cx| {
+                if view.snapshots.is_empty() {
+                    return false;
+                }
+                native::toast_allow_focus(window, true);
+                window.activate_window();
+                view.focus.focus(window);
+                view.keyboard = true;
+                view.expanded = true;
+                cx.notify();
+                true
+            })
+            .unwrap_or(false)
+        {
+            break;
+        }
     }
 }
 
@@ -632,6 +646,9 @@ impl Render for ToastStack {
         // snapshot and are never rebound to another reminder during reflow.
         let mut order: Vec<usize> = (0..self.cards.len()).collect();
         order.sort_by_key(|i| {
+            if self.cards[*i].departing {
+                return usize::MAX;
+            }
             self.snapshots
                 .iter()
                 .position(|toast| toast.reminder_id == self.cards[*i].snapshot.reminder_id)
@@ -664,6 +681,7 @@ impl Render for ToastStack {
                 height: ((bottom * scale).ceil() - (top * scale).floor()) as i32,
             });
             let id = card.snapshot.reminder_id;
+            let departing = card.departing;
             let selected = self.keyboard
                 && self
                     .snapshots
@@ -703,7 +721,11 @@ impl Render for ToastStack {
                         .h(px(28.))
                         .text_sm()
                         .bg(surface)
-                        .on_click(cx.listener(move |this, _, _, cx| this.dismiss(id, cx)))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            if !departing {
+                                this.dismiss(id, cx);
+                            }
+                        }))
                         .child(if selected {
                             "Закрыть ↵"
                         } else {
@@ -725,6 +747,9 @@ impl Render for ToastStack {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                        if departing {
+                            return;
+                        }
                         let mouse_x = f32::from(event.position.x);
                         let mouse_y = f32::from(event.position.y);
                         if mouse_x >= frame.x + frame.width - 116.
@@ -742,7 +767,7 @@ impl Render for ToastStack {
                         cx.notify();
                     }),
                 );
-            if !card.departing && frame.content > 0.01 {
+            if frame.content > 0.01 {
                 element = element.child(content);
             }
             root = root.child(element);
