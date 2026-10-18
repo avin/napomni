@@ -1,6 +1,13 @@
-use crate::{input::TextInput, schedule_demo};
+use crate::schedule_demo;
+use gpui::assets::IconName;
+use gpui::component::{
+    ActiveTheme, Disableable, Icon, Selectable, Sizable,
+    button::{Button, ButtonVariants},
+    input::{Input, InputEvent, InputState},
+};
 use gpui::{
-    App, Context, Div, Entity, IntoElement, Window, WindowAppearance, div, prelude::*, rgb,
+    Context, Div, Entity, Focusable, FontWeight, IntoElement, ScrollHandle, Window, div,
+    prelude::*, px, rgb,
 };
 use std::{sync::mpsc, time::Duration};
 use win_notifi_toast::chat::{ChatSession, Connection, Provider};
@@ -20,62 +27,35 @@ enum ListAction {
     Undo,
 }
 
-struct Palette {
-    background: u32,
-    surface: u32,
-    text: u32,
-    muted: u32,
-    border: u32,
+#[derive(Clone, Copy, PartialEq)]
+enum Page {
+    Reminders,
+    Settings,
 }
-impl Palette {
-    fn for_window(window: &Window) -> Self {
-        match window.appearance() {
-            WindowAppearance::Dark | WindowAppearance::VibrantDark => Self {
-                background: 0x15171b,
-                surface: 0x202329,
-                text: 0xf3f4f6,
-                muted: 0xb1b8c4,
-                border: 0x393e48,
-            },
-            _ => Self {
-                background: 0xf5f6f8,
-                surface: 0xffffff,
-                text: 0x20242c,
-                muted: 0x5e6878,
-                border: 0xdce0e7,
-            },
-        }
-    }
+#[derive(Clone, Copy, PartialEq)]
+enum Filter {
+    Active,
+    Paused,
+    Completed,
 }
-fn button(
-    label: &'static str,
-    on_click: impl Fn(&mut Window, &mut App) + 'static,
-) -> impl IntoElement {
-    div()
-        .id(label)
-        .px_3()
-        .py_2()
-        .bg(rgb(0x365edc))
-        .text_color(rgb(0xffffff))
-        .cursor_pointer()
-        .hover(|s| s.bg(rgb(0x284ab9)))
-        .on_click(move |_, w, c| on_click(w, c))
-        .child(label)
-}
+
 pub struct MainWindow {
     pub session: Option<ChatSession>,
-    pub command: Entity<TextInput>,
-    base_url: Entity<TextInput>,
-    api_key: Entity<TextInput>,
-    model: Entity<TextInput>,
+    pub command: Entity<InputState>,
+    base_url: Entity<InputState>,
+    api_key: Entity<InputState>,
+    model: Entity<InputState>,
     pub status: String,
     pub busy: bool,
     verified_connection: Option<Connection>,
     pub(crate) selected_id: Option<ReminderId>,
     pending: Option<CommandRecovery>,
+    page: Page,
+    filter: Filter,
+    history_scroll: ScrollHandle,
 }
 impl MainWindow {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let opened = ChatSession::open(ChatSession::default_directory());
         let status = opened
             .as_ref()
@@ -95,17 +75,47 @@ impl MainWindow {
         } else {
             status
         };
+        let command = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Например: напомни выпить воды через 20 минут")
+        });
+        cx.subscribe_in(&command, window, |this, _, event, window, cx| {
+            if matches!(event, InputEvent::PressEnter { .. }) {
+                this.request(false, window, cx);
+            }
+        })
+        .detach();
+        let base_url = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("https://api.openai.com/v1")
+                .default_value(connection.base_url)
+        });
+        let api_key = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Ваш API-ключ")
+                .default_value(connection.api_key)
+                .masked(true)
+        });
+        let model = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("ID модели")
+                .default_value(connection.model)
+        });
+        let history_scroll = ScrollHandle::new();
+        history_scroll.scroll_to_bottom();
         Self {
             session,
-            command: cx.new(|cx| TextInput::new("", "Введите команду по-русски", cx)),
-            base_url: cx.new(|cx| TextInput::new(connection.base_url, "Базовый URL", cx)),
-            api_key: cx.new(|cx| TextInput::new(connection.api_key, "API-ключ", cx)),
-            model: cx.new(|cx| TextInput::new(connection.model, "ID модели", cx)),
+            command,
+            base_url,
+            api_key,
+            model,
             status,
             busy: false,
             verified_connection: None,
             selected_id,
             pending,
+            page: Page::Reminders,
+            filter: Filter::Active,
+            history_scroll,
         }
     }
     fn apply_list_action(&mut self, action: ListAction, cx: &mut Context<Self>) {
@@ -176,6 +186,7 @@ impl MainWindow {
         catalog: &win_notifi_toast::catalog::Catalog,
         id: &str,
         source: &Connection,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let session = self
@@ -189,7 +200,7 @@ impl MainWindow {
         }
         catalog.select(id, session)?;
         self.model
-            .update(cx, |model, cx| model.set_value(id.to_owned(), cx));
+            .update(cx, |model, cx| model.set_value(id.to_owned(), window, cx));
         self.status = format!("Выбрана модель {id}; перед запросом проверим инструменты");
         cx.notify();
         Ok(())
@@ -218,15 +229,21 @@ impl MainWindow {
             }
         }
     }
-    fn request(&mut self, probe: bool, cx: &mut Context<Self>) {
-        self.send_request(probe, false, cx);
+    fn request(&mut self, probe: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_request(probe, false, window, cx);
     }
-    fn retry_command(&mut self, cx: &mut Context<Self>) {
+    fn retry_command(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.pending.is_some() {
-            self.send_request(false, true, cx);
+            self.send_request(false, true, window, cx);
         }
     }
-    fn send_request(&mut self, probe: bool, retry: bool, cx: &mut Context<Self>) {
+    fn send_request(
+        &mut self,
+        probe: bool,
+        retry: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if self.busy || !self.save_connection(cx) {
             return;
         }
@@ -256,7 +273,8 @@ impl MainWindow {
                 cx.notify();
                 return;
             }
-            self.command.update(cx, |input, cx| input.set_value("", cx));
+            self.command
+                .update(cx, |input, cx| input.set_value("", window, cx));
         }
         let history = self.session.as_ref().unwrap().messages().to_vec();
         if !probe {
@@ -281,6 +299,7 @@ impl MainWindow {
                 return;
             }
             self.pending = recovery.clone();
+            self.history_scroll.scroll_to_bottom();
         }
         let connection = self.session.as_ref().unwrap().connection().clone();
         let must_probe = self.verified_connection.as_ref() != Some(&connection);
@@ -336,12 +355,14 @@ impl MainWindow {
                             {
                                 view.status = error.to_string();
                             }
+                            view.history_scroll.scroll_to_bottom();
                             cx.notify();
                         });
                     }
                     Ok(ChatEvent::Finished(result)) => {
                         let _ = view.update(cx, |view, cx| {
                             view.busy = false;
+                            view.history_scroll.scroll_to_bottom();
                             match result {
                                 Ok(outcome) => {
                                     view.verified_connection = Some(connection);
@@ -380,6 +401,7 @@ impl MainWindow {
                     Err(mpsc::TryRecvError::Disconnected) => {
                         let _ = view.update(cx, |view, cx| {
                             view.busy = false;
+                            view.history_scroll.scroll_to_bottom();
                             view.status = "Сетевой обработчик завершился без ответа".into();
                             cx.notify();
                         });
@@ -392,48 +414,41 @@ impl MainWindow {
         .detach();
     }
 }
-impl Render for MainWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let c = Palette::for_window(window);
-        let entity = cx.entity();
-        let save = entity.clone();
-        let probe = entity.clone();
-        let clear = entity.clone();
-        let send = entity.clone();
-        let catalog = entity.clone();
-        let undo = entity.clone();
-        let detach = entity.clone();
-        let retry = entity.clone();
-        let send_controls = div()
-            .flex()
-            .flex_wrap()
-            .gap_2()
-            .child(button("Отправить", move |_, cx| {
-                send.update(cx, |v, cx| v.request(false, cx))
-            }))
-            .when(self.pending.is_some(), |row| {
-                row.child(button("Продолжить ответ", move |_, cx| {
-                    retry.update(cx, |v, cx| v.retry_command(cx))
-                }))
-            });
-        let mut selection = div().flex().gap_2().items_center();
-        if let Some(id) = self.selected_id {
-            selection = selection
-                .child(format!("Выбрано для изменения: #{id}"))
-                .child(button("Снять выбор", move |_, cx| {
-                    detach.update(cx, |v, cx| {
-                        if !v.busy {
-                            v.selected_id = None;
-                            cx.notify();
-                        }
-                    })
-                }));
-        }
-        let messages = self
-            .session
-            .as_ref()
-            .map(|s| s.messages().to_vec())
-            .unwrap_or_default();
+impl MainWindow {
+    fn connection_settings(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+        let t = cx.theme().clone();
+        div().id("settings-content").flex_1().min_h_0().overflow_y_scroll().p_8()
+            .child(div().max_w(px(780.)).mx_auto().flex().flex_col().gap_6()
+                .child(div().child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child("Настройки"))
+                    .child(div().mt_2().text_color(t.muted_foreground).child("Подключите ассистента и выберите, где показывать тосты.")))
+                .child(div().p_6().rounded_xl().border_1().border_color(t.border).bg(t.background).flex().flex_col().gap_5()
+                    .child(div().flex().items_center().gap_3().child(Icon::new(IconName::Bot).text_color(t.primary))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Подключение ассистента")))
+                    .child(div().text_sm().text_color(t.muted_foreground).child("Подойдёт любой OpenAI-совместимый API с поддержкой инструментов."))
+                    .child(field("Базовый URL", Input::new(&self.base_url).disabled(self.busy)))
+                    .child(field("API-ключ", Input::new(&self.api_key).disabled(self.busy)))
+                    .child(div().text_xs().text_color(t.muted_foreground).child("Ключ скрыт на экране и хранится открытым текстом в локальном конфиге."))
+                    .child(field("Модель", Input::new(&self.model).disabled(self.busy)))
+                    .child(div().flex().flex_wrap().gap_2()
+                        .child(Button::new("catalog").label("Выбрать из каталога").icon(IconName::Search).disabled(self.busy)
+                            .on_click(cx.listener(|v, _, _, cx| v.open_catalog(cx))))
+                        .child(Button::new("save").label("Сохранить").disabled(self.busy)
+                            .on_click(cx.listener(|v, _, _, cx| { v.save_connection(cx); })))
+                        .child(Button::new("probe").primary().label("Проверить подключение").loading(self.busy)
+                            .on_click(cx.listener(|v, _, window, cx| v.request(true, window, cx))))))
+                .child(div().p_6().rounded_xl().border_1().border_color(t.border).bg(t.background).flex().flex_col().gap_4()
+                    .child(div().flex().items_center().gap_3().child(Icon::new(IconName::Settings2).text_color(t.primary))
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Тосты и запуск Windows")))
+                    .child(div().text_sm().text_color(t.muted_foreground).child("Выберите монитор, угол экрана и автозапуск при входе в систему."))
+                    .child(div().flex().flex_wrap().gap_2()
+                        .child(Button::new("placement").label("Настроить размещение").on_click(|_, w, cx| crate::settings_ui::open(w, cx)))
+                        .child(Button::new("demo").ghost().label("Показать тестовые тосты").icon(IconName::Bell)
+                            .on_click(|_, _, cx| schedule_demo(cx)))))
+                .child(div().text_sm().text_color(t.muted_foreground).child("Сохранённые напоминания работают без интернета. Ассистент нужен только для команд в чате.")))
+    }
+
+    fn workspace(&self, cx: &mut Context<Self>) -> Div {
+        let t = cx.theme().clone();
         let records = cx
             .global::<crate::reminder_ui::Reminders>()
             .app
@@ -445,240 +460,572 @@ impl Render for MainWindow {
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
-        let mut reminder_list = div()
+        let counts = [
+            records
+                .iter()
+                .filter(|(r, _)| !r.completed && !r.paused)
+                .count(),
+            records
+                .iter()
+                .filter(|(r, _)| !r.completed && r.paused)
+                .count(),
+            records.iter().filter(|(r, _)| r.completed).count(),
+        ];
+        let mut filters = div().flex().flex_wrap().gap_1();
+        for (index, (filter, label)) in [
+            (Filter::Active, "Активные"),
+            (Filter::Paused, "На паузе"),
+            (Filter::Completed, "Завершённые"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            filters = filters.child(
+                Button::new(("filter", index))
+                    .ghost()
+                    .small()
+                    .selected(self.filter == filter)
+                    .label(format!("{label}  {}", counts[index]))
+                    .on_click(cx.listener(move |v, _, _, cx| {
+                        v.filter = filter;
+                        cx.notify();
+                    })),
+            );
+        }
+        let mut list = div()
             .id("reminder-list")
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
+            .p_5()
             .flex()
             .flex_col()
-            .gap_3()
-            .w(gpui::px(280.))
-            .p_3()
-            .bg(rgb(c.surface))
-            .child("Список напоминаний")
-            .child(button("Отменить", move |_, cx| {
-                undo.update(cx, |v, cx| v.apply_list_action(ListAction::Undo, cx))
-            }));
-        for completed in [false, true] {
-            reminder_list =
-                reminder_list.child(div().mt_3().font_weight(gpui::FontWeight::SEMIBOLD).child(
-                    if completed {
-                        "Завершённые"
-                    } else {
-                        "Активные"
-                    },
-                ));
-            for (reminder, description) in records.iter().filter(|(r, _)| r.completed == completed)
-            {
-                let id = reminder.id;
-                let paused = reminder.paused;
-                let edit = entity.clone();
-                let pause = entity.clone();
-                let delete = entity.clone();
-                reminder_list = reminder_list.child(
-                    div()
-                        .id(("reminder", id as usize))
-                        .p_2()
-                        .border_l_2()
-                        .border_color(rgb(reminder.border))
-                        .child(format!("#{} {}", reminder.id, reminder.text))
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(rgb(c.muted))
-                                .child(description.clone()),
-                        )
-                        .child(div().text_sm().child(if paused {
-                            "Приостановлено"
-                        } else {
-                            ""
-                        }))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_wrap()
-                                .gap_2()
-                                .child(button("Редактировать", move |_, cx| {
-                                    edit.update(cx, |v, cx| {
-                                        if !v.busy {
-                                            v.selected_id = Some(id);
-                                            v.status = format!(
-                                                "Опишите изменение напоминания #{id} в чате"
-                                            );
-                                            cx.notify();
-                                        }
-                                    })
-                                }))
-                                .child(button(
-                                    if paused {
-                                        "Возобновить"
-                                    } else {
-                                        "Приостановить"
-                                    },
-                                    move |_, cx| {
-                                        pause.update(cx, |v, cx| {
-                                            v.apply_list_action(ListAction::Pause(id, !paused), cx)
+            .gap_3();
+        let visible = records
+            .iter()
+            .filter(|(r, _)| match self.filter {
+                Filter::Active => !r.completed && !r.paused,
+                Filter::Paused => !r.completed && r.paused,
+                Filter::Completed => r.completed,
+            })
+            .collect::<Vec<_>>();
+        if visible.is_empty() {
+            list = list.child(div().flex_1().min_h(px(220.)).flex().flex_col().items_center().justify_center().gap_3()
+                .child(div().p_4().rounded_full().bg(t.secondary).child(Icon::new(IconName::Bell).size_6().text_color(t.primary)))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(match self.filter { Filter::Active => "Всё под контролем", Filter::Paused => "Нет напоминаний на паузе", Filter::Completed => "Здесь будут завершённые напоминания" }))
+                .child(div().max_w(px(310.)).text_center().text_sm().text_color(t.muted_foreground)
+                    .child(if records.is_empty() { "Напишите в чате, о чём и когда напомнить. Ассистент составит расписание." } else { "Выберите другой раздел или создайте напоминание в чате." })));
+        }
+        for (r, description) in visible {
+            let id = r.id;
+            let paused = r.paused;
+            let selected = self.selected_id == Some(id);
+            list = list.child(
+                div()
+                    .id(("reminder", id as usize))
+                    .flex_shrink_0()
+                    .p_4()
+                    .rounded_lg()
+                    .border_1()
+                    .border_color(if selected { t.primary } else { t.border })
+                    .bg(t.background)
+                    .child(
+                        div()
+                            .flex()
+                            .gap_3()
+                            .items_start()
+                            .child(div().w(px(4.)).h(px(36.)).rounded_full().bg(rgb(r.border)))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child(r.text.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_2()
+                                            .items_start()
+                                            .text_sm()
+                                            .text_color(t.muted_foreground)
+                                            .child(Icon::new(IconName::Clock).small())
+                                            .child(description.clone()),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .gap_2()
+                                            .text_xs()
+                                            .text_color(t.muted_foreground)
+                                            .child(format!("№ {id}"))
+                                            .child(if r.sound {
+                                                "Со звуком"
+                                            } else {
+                                                "Без звука"
+                                            })
+                                            .when(selected, |e| {
+                                                e.child(
+                                                    div()
+                                                        .text_color(t.primary)
+                                                        .child("Выбрано для изменения"),
+                                                )
+                                            }),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_3()
+                            .flex()
+                            .flex_wrap()
+                            .gap_1()
+                            .child(
+                                Button::new("edit")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::SquarePen)
+                                    .label("Изменить")
+                                    .disabled(self.busy)
+                                    .on_click(cx.listener(move |v, _, window, cx| {
+                                        v.selected_id = Some(id);
+                                        v.status = format!(
+                                            "Опишите в чате, что изменить в напоминании № {id}"
+                                        );
+                                        v.command.read(cx).focus_handle(cx).focus(window, cx);
+                                        cx.notify();
+                                    })),
+                            )
+                            .when(!r.completed, |e| {
+                                e.child(
+                                    Button::new("pause")
+                                        .ghost()
+                                        .small()
+                                        .icon(if paused {
+                                            IconName::Play
+                                        } else {
+                                            IconName::Pause
                                         })
-                                    },
-                                ))
-                                .child(button("Удалить", move |_, cx| {
-                                    delete.update(cx, |v, cx| {
+                                        .label(if paused {
+                                            "Возобновить"
+                                        } else {
+                                            "На паузу"
+                                        })
+                                        .disabled(self.busy)
+                                        .on_click(cx.listener(move |v, _, _, cx| {
+                                            v.apply_list_action(ListAction::Pause(id, !paused), cx)
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new("delete")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Trash)
+                                    .tooltip("Удалить напоминание")
+                                    .accessibility_label("Удалить напоминание")
+                                    .disabled(self.busy)
+                                    .on_click(cx.listener(move |v, _, _, cx| {
                                         v.apply_list_action(ListAction::Delete(id), cx)
-                                    })
-                                })),
-                        ),
+                                    })),
+                            ),
+                    ),
+            );
+        }
+        let reminders = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .min_h_0()
+            .rounded_xl()
+            .border_1()
+            .border_color(t.border)
+            .bg(t.background)
+            .child(
+                div()
+                    .p_5()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Мои напоминания"),
+                            )
+                            .child(
+                                Button::new("undo")
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Undo2)
+                                    .tooltip("Отменить последнее изменение")
+                                    .accessibility_label("Отменить последнее изменение")
+                                    .disabled(self.busy)
+                                    .on_click(cx.listener(|v, _, _, cx| {
+                                        v.apply_list_action(ListAction::Undo, cx)
+                                    })),
+                            ),
+                    )
+                    .child(filters),
+            )
+            .child(list);
+        let messages = self
+            .session
+            .as_ref()
+            .map(|s| s.messages().to_vec())
+            .unwrap_or_default();
+        let mut history = div()
+            .id("chat-history")
+            .track_scroll(&self.history_scroll)
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p_5()
+            .flex()
+            .flex_col()
+            .gap_4();
+        if messages.is_empty() {
+            history = history.child(div().py_6().flex().flex_col().gap_4()
+                .child(div().size(px(44.)).rounded_lg().bg(t.secondary).flex().items_center().justify_center().child(Icon::new(IconName::Sparkles).text_color(t.primary)))
+                .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Освободите голову\nдля важного"))
+                .child(div().text_sm().text_color(t.muted_foreground).child("Расскажите, о чём напомнить, обычными словами. Можно указать время, повторение, цвет и звук.")));
+            for (i, example) in [
+                "Напомни выпить воды через 20 минут",
+                "Напоминай размяться по будням в 11:00",
+                "Напомни завтра в 10:00 позвонить",
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                history = history.child(
+                    Button::new(("example", i))
+                        .ghost()
+                        .small()
+                        .label(example)
+                        .w_full()
+                        .on_click(cx.listener(move |v, _, window, cx| {
+                            v.command
+                                .update(cx, |input, cx| input.set_value(example, window, cx));
+                            v.command.read(cx).focus_handle(cx).focus(window, cx);
+                        })),
                 );
             }
         }
-        if records.is_empty() {
-            reminder_list = reminder_list.child("Пока напоминаний нет");
+        for (index, m) in messages.into_iter().enumerate() {
+            let user = m.role == "user";
+            history = history.child(
+                div()
+                    .id(("message", index))
+                    .flex_shrink_0()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(t.muted_foreground)
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(if user { "ВЫ" } else { "АССИСТЕНТ" }),
+                    )
+                    .child(
+                        div()
+                            .p_3()
+                            .rounded_lg()
+                            .bg(if user { t.secondary } else { t.background })
+                            .border_1()
+                            .border_color(if user { t.secondary } else { t.border })
+                            .text_sm()
+                            .child(m.content),
+                    ),
+            );
         }
+        let configured = self
+            .session
+            .as_ref()
+            .is_some_and(|s| !s.connection().model.is_empty());
+        let chat =
+            div()
+                .w(gpui::relative(0.46))
+                .min_w(px(370.))
+                .flex()
+                .flex_col()
+                .min_h_0()
+                .rounded_xl()
+                .border_1()
+                .border_color(t.border)
+                .bg(t.background)
+                .child(
+                    div()
+                        .p_5()
+                        .border_b_1()
+                        .border_color(t.border)
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(Icon::new(IconName::Sparkles).text_color(t.primary))
+                                .child(div().font_weight(FontWeight::SEMIBOLD).child("Ассистент")),
+                        )
+                        .child(
+                            Button::new("clear")
+                                .ghost()
+                                .small()
+                                .icon(IconName::Eraser)
+                                .tooltip("Очистить историю")
+                                .accessibility_label("Очистить историю")
+                                .disabled(self.busy)
+                                .on_click(cx.listener(|v, _, _, cx| {
+                                    if let Some(s) = v.session.as_mut() {
+                                        match s.clear() {
+                                            Ok(()) => {
+                                                v.selected_id = None;
+                                                v.pending = None;
+                                                v.status.clear();
+                                            }
+                                            Err(e) => v.status = e.to_string(),
+                                        }
+                                    }
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(history)
+                .child(
+                    div()
+                        .p_4()
+                        .border_t_1()
+                        .border_color(t.border)
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .when(!configured, |e| {
+                            e.child(
+                                Button::new("setup")
+                                    .label("Подключить ассистента")
+                                    .icon(IconName::Settings2)
+                                    .w_full()
+                                    .on_click(cx.listener(|v, _, _, cx| {
+                                        v.page = Page::Settings;
+                                        cx.notify();
+                                    })),
+                            )
+                        })
+                        .when_some(self.selected_id, |e, id| {
+                            e.child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .text_sm()
+                                    .text_color(t.primary)
+                                    .child(format!("Изменяем напоминание № {id}"))
+                                    .child(
+                                        Button::new("detach")
+                                            .ghost()
+                                            .small()
+                                            .icon(IconName::X)
+                                            .tooltip("Снять выбор")
+                                            .accessibility_label("Снять выбор")
+                                            .disabled(self.busy)
+                                            .on_click(cx.listener(|v, _, _, cx| {
+                                                v.selected_id = None;
+                                                cx.notify();
+                                            })),
+                                    ),
+                            )
+                        })
+                        .child(Input::new(&self.command).disabled(self.busy))
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(t.muted_foreground)
+                                        .child("Enter — отправить"),
+                                )
+                                .child(
+                                    Button::new("send")
+                                        .primary()
+                                        .icon(IconName::ArrowUp)
+                                        .label("Отправить")
+                                        .loading(self.busy)
+                                        .on_click(cx.listener(|v, _, window, cx| {
+                                            v.request(false, window, cx)
+                                        })),
+                                ),
+                        )
+                        .when(self.pending.is_some(), |e| {
+                            e.child(
+                                Button::new("retry")
+                                    .label("Продолжить ответ")
+                                    .disabled(self.busy)
+                                    .w_full()
+                                    .on_click(
+                                        cx.listener(|v, _, window, cx| v.retry_command(window, cx)),
+                                    ),
+                            )
+                        }),
+                );
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .gap_5()
+            .p_6()
+            .child(reminders)
+            .child(chat)
+    }
+}
+
+impl Render for MainWindow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let t = cx.theme().clone();
         div()
             .size_full()
             .flex()
             .flex_col()
-            .gap_3()
-            .p_5()
             .font_family("Segoe UI")
             .text_base()
-            .text_color(rgb(c.text))
-            .bg(rgb(c.background))
-            .child(div().text_2xl().child("Напоминания"))
+            .text_color(t.foreground)
+            .bg(t.muted)
             .child(
                 div()
+                    .px_6()
+                    .py_4()
                     .flex()
-                    .flex_col()
-                    .gap_2()
-                    .p_3()
-                    .border_1()
-                    .border_color(rgb(c.border))
-                    .bg(rgb(c.surface))
-                    .child("Подключение LLM")
+                    .items_center()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(t.border)
+                    .bg(t.background)
                     .child(
                         div()
                             .flex()
+                            .items_center()
                             .gap_3()
                             .child(
                                 div()
-                                    .flex_1()
-                                    .child("Базовый URL")
-                                    .child(self.base_url.clone()),
-                            )
-                            .child(div().flex_1().child("ID модели").child(self.model.clone())),
-                    )
-                    .child(
-                        div()
-                            .child("API-ключ (сохраняется открытым текстом)")
-                            .child(self.api_key.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .child(button(
-                                "Сохранить подключение",
-                                move |_, cx| {
-                                    save.update(cx, |v, cx| {
-                                        v.save_connection(cx);
-                                    })
-                                },
-                            ))
-                            .child(button("Каталог моделей", move |_, cx| {
-                                catalog.update(cx, |view, cx| view.open_catalog(cx))
-                            }))
-                            .child(button(
-                                "Проверить подключение",
-                                move |_, cx| probe.update(cx, |v, cx| v.request(true, cx)),
-                            )),
-                    ),
-            )
-            .child(
-                div()
-                    .flex()
-                    .gap_4()
-                    .flex_1()
-                    .min_h_0()
-                    .child(reminder_list)
-                    .child(
-                        div()
-                            .flex_1()
-                            .flex()
-                            .flex_col()
-                            .min_h_0()
-                            .gap_2()
-                            .p_3()
-                            .bg(rgb(c.surface))
-                            .child(
-                                div()
+                                    .size(px(40.))
+                                    .rounded_lg()
+                                    .bg(t.primary)
+                                    .text_color(t.primary_foreground)
                                     .flex()
-                                    .justify_between()
                                     .items_center()
-                                    .child("Общий чат")
-                                    .child(button(
-                                        "Очистить историю",
-                                        move |_, cx| {
-                                            clear.update(cx, |v, cx| {
-                                                if !v.busy {
-                                                    if let Some(s) = v.session.as_mut() {
-                                                        match s.clear() {
-                                                            Ok(()) => {
-                                                                v.selected_id = None;
-                                                                v.pending = None;
-                                                                v.status.clear();
-                                                            }
-                                                            Err(error) => {
-                                                                v.status = error.to_string()
-                                                            }
-                                                        }
-                                                    }
-                                                    cx.notify();
-                                                }
-                                            })
-                                        },
-                                    )),
+                                    .justify_center()
+                                    .child(Icon::new(IconName::Bell)),
                             )
                             .child(
                                 div()
-                                    .id("chat-history")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_3()
-                                    .children(messages.into_iter().map(|m| {
+                                    .child(
                                         div()
-                                            .p_2()
-                                            .child(if m.role == "user" {
-                                                "Вы"
-                                            } else {
-                                                "Ассистент"
-                                            })
-                                            .child(div().child(m.content))
+                                            .text_lg()
+                                            .font_weight(FontWeight::SEMIBOLD)
+                                            .child("Напоминания"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(t.muted_foreground)
+                                            .child("Меньше держать в голове"),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("nav-reminders")
+                                    .ghost()
+                                    .selected(self.page == Page::Reminders)
+                                    .label("Напоминания")
+                                    .icon(IconName::Bell)
+                                    .on_click(cx.listener(|v, _, _, cx| {
+                                        v.page = Page::Reminders;
+                                        cx.notify();
                                     })),
                             )
-                            .child(selection)
-                            .child(self.command.clone())
-                            .child(send_controls),
+                            .child(
+                                Button::new("nav-settings")
+                                    .ghost()
+                                    .selected(self.page == Page::Settings)
+                                    .label("Настройки")
+                                    .icon(IconName::Settings2)
+                                    .on_click(cx.listener(|v, _, _, cx| {
+                                        v.page = Page::Settings;
+                                        cx.notify();
+                                    })),
+                            ),
                     ),
             )
+            .child(match self.page {
+                Page::Reminders => self.workspace(cx).into_any_element(),
+                Page::Settings => self.connection_settings(cx).into_any_element(),
+            })
+            .when(!self.status.is_empty(), |e| {
+                e.child(
+                    div()
+                        .id("status")
+                        .max_h(px(96.))
+                        .overflow_y_scroll()
+                        .px_6()
+                        .py_3()
+                        .bg(t.secondary)
+                        .text_sm()
+                        .child(self.status.clone()),
+                )
+            })
             .child(
                 div()
-                    .text_sm()
-                    .text_color(rgb(c.muted))
-                    .child(self.status.clone()),
-            )
-            .child(
-                div()
+                    .px_6()
+                    .py_3()
                     .flex()
-                    .gap_3()
-                    .child(button("Настройки размещения", crate::settings_ui::open))
-                    .child(button("Показать тестовые тосты", |_, cx| schedule_demo(cx)))
-                    .child(div().text_sm().child(
-                        "Закрытие окна оставляет приложение в трее. Выход — через меню значка.",
-                    )),
+                    .items_center()
+                    .gap_2()
+                    .border_t_1()
+                    .border_color(t.border)
+                    .bg(t.background)
+                    .text_xs()
+                    .text_color(t.muted_foreground)
+                    .child(Icon::new(IconName::Monitor).small())
+                    .child("Работает в трее")
+                    .child(div().flex_1())
+                    .child("Закрытие окна не останавливает напоминания"),
             )
     }
 }
+
+fn field(label: &'static str, input: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(div().text_sm().font_weight(FontWeight::MEDIUM).child(label))
+        .child(input)
+}
+
 pub fn error_message(message: String) -> Div {
     div().p_6().font_family("Segoe UI").child(message)
 }

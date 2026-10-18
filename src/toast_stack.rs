@@ -2,6 +2,10 @@
 //! excluded from the HWND region; the number of snapshots never limits the UI.
 use std::time::{Duration, Instant};
 
+use gpui::component::{
+    ActiveTheme, Icon, IconName, Sizable,
+    button::{Button, ButtonVariants},
+};
 use gpui::{prelude::*, *};
 use win_notifi_toast::{
     placement::{Corner, Placement, Rect},
@@ -14,6 +18,9 @@ const TRANSITION: Duration = Duration::from_millis(220);
 const GAP: f32 = 12.;
 const FONT_SIZE: f32 = 16.;
 const LINE_HEIGHT: f32 = 24.;
+const BODY_TOP: f32 = 76.;
+const BODY_INSET: f32 = 22.;
+const CARD_CHROME: f32 = BODY_TOP + 40.;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Source {
@@ -76,7 +83,7 @@ pub fn focus(cx: &mut App) {
                 }
                 native::toast_allow_focus(window, true);
                 window.activate_window();
-                view.focus.focus(window);
+                view.focus.focus(window, cx);
                 view.keyboard = true;
                 view.expanded = true;
                 cx.notify();
@@ -508,12 +515,9 @@ impl Render for ToastStack {
         if self.cards.is_empty() {
             window.remove_window();
         }
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
-        let surface = rgb(if dark { 0x202329 } else { 0xffffff });
-        let text: Hsla = rgb(if dark { 0xf3f4f6 } else { 0x20242c }).into();
+        let surface = cx.theme().background;
+        let text = cx.theme().foreground;
+        let muted = cx.theme().muted_foreground;
         let width = self.placement.viewport.width as f32 / self.placement.scale;
         let viewport_height = self.placement.viewport.height as f32 / self.placement.scale;
         for card in &mut self.cards {
@@ -533,7 +537,7 @@ impl Render for ToastStack {
                         string,
                         px(FONT_SIZE),
                         &[run],
-                        Some(px((width - 36.).max(1.))),
+                        Some(px((width - BODY_INSET * 2.).max(1.))),
                         None,
                     )
                     .map(|lines| {
@@ -541,10 +545,10 @@ impl Render for ToastStack {
                             .iter()
                             .map(|line| f32::from(line.size(px(LINE_HEIGHT)).height))
                             .sum::<f32>()
-                            + 72.
+                            + CARD_CHROME
                     })
                     .unwrap_or(180.)
-                    .max(104.);
+                    .max(144.);
                 card.measured_width = width;
             }
         }
@@ -568,7 +572,7 @@ impl Render for ToastStack {
                     .iter()
                     .find(|c| c.snapshot.reminder_id == toast.reminder_id && !c.departing)
             })
-            .map_or(104., |c| c.height);
+            .map_or(144., |c| c.height);
         let mut offset = 0.;
         for (index, snapshot) in self.snapshots.iter().enumerate() {
             if let Some(card) = self
@@ -687,49 +691,90 @@ impl Render for ToastStack {
                     .get(self.selected)
                     .is_some_and(|s| s.reminder_id == id);
             let content_opacity = frame.content.clamp(0., 1.);
-            let close_top = (12. - frame.y).max(12.).min((frame.height - 40.).max(0.));
+            let accent: Hsla = rgb(card.snapshot.border).into();
+            let close_top = (16. - frame.y).max(16.).min((frame.height - 44.).max(0.));
             let content = div()
                 .size_full()
                 .opacity(content_opacity)
                 .child(
                     div()
                         .absolute()
-                        .top(px(12.))
-                        .left(px(16.))
-                        .text_sm()
-                        .text_color(text.opacity(0.7))
-                        .child("Напоминание"),
+                        .top(px(18.))
+                        .left(px(BODY_INSET))
+                        .size(px(36.))
+                        .rounded(px(11.))
+                        .bg(accent.opacity(0.12))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            Icon::new(IconName::Bell)
+                                .with_size(px(18.))
+                                .text_color(accent),
+                        ),
                 )
                 .child(
                     div()
                         .absolute()
-                        .top(px(44.))
-                        .left(px(16.))
-                        .w(px((width - 36.).max(1.)))
+                        .top(px(16.))
+                        .left(px(70.))
+                        .right(px(56.))
+                        .text_size(px(13.))
+                        .line_height(px(20.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(if self.source == Source::Demo {
+                            "Пробное напоминание"
+                        } else {
+                            "Напоминание"
+                        })
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(muted)
+                                .child(if card.snapshot.sound {
+                                    "Со звуком"
+                                } else {
+                                    "Без звука"
+                                }),
+                        ),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(BODY_TOP))
+                        .left(px(BODY_INSET))
+                        .w(px((width - BODY_INSET * 2.).max(1.)))
                         .child(card.snapshot.text.clone()),
                 )
                 .child(
                     div()
-                        .id(("close-toast", id))
                         .absolute()
-                        .right(px(12.))
-                        .top(px(close_top))
-                        .cursor_pointer()
-                        .px_2()
-                        .w(px(104.))
-                        .h(px(28.))
-                        .text_sm()
-                        .bg(surface)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            if !departing {
-                                this.dismiss(id, cx);
-                            }
-                        }))
+                        .left(px(BODY_INSET))
+                        .bottom(px(12.))
+                        .text_size(px(11.))
+                        .line_height(px(16.))
+                        .text_color(muted)
                         .child(if selected {
-                            "Закрыть ↵"
+                            "Enter — закрыть"
                         } else {
-                            "Закрыть ×"
+                            "Смахните, чтобы закрыть"
                         }),
+                )
+                .child(
+                    div().absolute().right(px(14.)).top(px(close_top)).child(
+                        Button::new(("close-toast", id))
+                            .icon(IconName::Close)
+                            .accessibility_label("Закрыть напоминание")
+                            .ghost()
+                            .with_size(px(28.))
+                            .tab_stop(false)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !departing {
+                                    this.dismiss(id, cx);
+                                }
+                            })),
+                    ),
                 );
             let mut element = div()
                 .id(("toast", card.snapshot.sequence))
@@ -741,8 +786,13 @@ impl Render for ToastStack {
                 .opacity(frame.opacity.clamp(0., 1.))
                 .overflow_hidden()
                 .bg(surface)
-                .border_2()
-                .border_color(rgb(card.snapshot.border))
+                .rounded(px(16.))
+                .border_1()
+                .border_color(if selected {
+                    accent
+                } else {
+                    accent.opacity(0.42)
+                })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event: &MouseDownEvent, _, cx| {
@@ -751,7 +801,8 @@ impl Render for ToastStack {
                         }
                         let mouse_x = f32::from(event.position.x);
                         let mouse_y = f32::from(event.position.y);
-                        if mouse_x >= frame.x + frame.width - 116.
+                        if mouse_x >= frame.x + frame.width - 44.
+                            && mouse_x < frame.x + frame.width - 14.
                             && mouse_y >= frame.y + close_top
                             && mouse_y < frame.y + close_top + 28.
                         {
@@ -767,7 +818,18 @@ impl Render for ToastStack {
                     }),
                 );
             if frame.content > 0.01 {
-                element = element.child(content);
+                element = element
+                    .child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(16.))
+                            .bottom(px(16.))
+                            .w(px(3.))
+                            .rounded_full()
+                            .bg(accent),
+                    )
+                    .child(content);
             }
             root = root.child(element);
         }

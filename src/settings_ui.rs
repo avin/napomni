@@ -1,5 +1,14 @@
-use gpui::{prelude::*, *};
-use win_notifi_toast::placement::{Corner, SettingsService};
+use gpui::{
+    component::{
+        ActiveTheme,
+        button::{Button, ButtonVariants},
+        radio::Radio,
+        switch::Switch,
+    },
+    prelude::*,
+    *,
+};
+use win_notifi_toast::placement::{Corner, Settings, SettingsService};
 
 use crate::native::WindowsDesktop;
 
@@ -18,141 +27,166 @@ pub fn initialize(cx: &mut App) -> anyhow::Result<()> {
 }
 
 pub fn open(_: &mut Window, cx: &mut App) {
-    let _ = cx.open_window(
+    let result = gpui::open_window(
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
-                size(px(620.), px(500.)),
+                size(px(700.), px(740.)),
                 cx,
             ))),
             titlebar: Some(TitlebarOptions {
-                title: Some("Настройки размещения".into()),
+                title: Some("Настройки".into()),
                 ..Default::default()
             }),
+            window_min_size: Some(size(px(540.), px(560.))),
             ..Default::default()
         },
+        cx,
         |window, cx| {
             crate::native::square_corners(window);
             cx.new(|_| SettingsView {
                 message: String::new(),
+                failed: false,
             })
         },
     );
+    if let Err(error) = result {
+        eprintln!("Не удалось открыть настройки: {error}");
+    }
 }
 
 struct SettingsView {
     message: String,
+    failed: bool,
+}
+impl SettingsView {
+    fn save(&mut self, next: Settings, cx: &mut Context<Self>) {
+        match cx.global_mut::<DesktopSettings>().0.save(next) {
+            Ok(()) => {
+                self.message = "Изменения сохранены".into();
+                self.failed = false;
+            }
+            Err(error) => {
+                self.message = error.to_string();
+                self.failed = true;
+            }
+        }
+        cx.notify();
+    }
 }
 impl Render for SettingsView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let dark = matches!(
-            window.appearance(),
-            WindowAppearance::Dark | WindowAppearance::VibrantDark
-        );
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = cx.theme();
+        let background = theme.background;
+        let foreground = theme.foreground;
+        let muted = theme.muted;
+        let muted_text = theme.muted_foreground;
+        let border = theme.border;
+        let primary = theme.primary;
+        let status_color = if self.failed {
+            theme.danger
+        } else {
+            theme.success
+        };
         let settings = cx.global::<DesktopSettings>().0.settings().clone();
-        let monitors = cx.global::<DesktopSettings>().0.monitors();
-        let mut content = div()
-            .size_full()
-            .p_6()
-            .flex()
-            .flex_col()
-            .gap_3()
-            .font_family("Segoe UI")
-            .text_color(rgb(if dark { 0xf3f4f6 } else { 0x20242c }))
-            .bg(rgb(if dark { 0x202329 } else { 0xffffff }))
-            .child(div().text_xl().child("Размещение тостов"))
-            .child(div().child("Монитор (нажмите для выбора)"));
-        let monitors = match monitors {
+        let monitors = match cx.global::<DesktopSettings>().0.monitors() {
             Ok(monitors) => monitors,
             Err(error) => {
                 self.message = error.to_string();
+                self.failed = true;
                 Vec::new()
             }
         };
+        let mut monitor_list = div().flex().flex_col().gap_2();
         for (index, monitor) in monitors.into_iter().enumerate() {
             let selected = settings
                 .monitor
                 .as_ref()
                 .map_or(monitor.primary, |id| id == &monitor.id);
-            let label = format!(
-                "{} {}{}",
-                if selected { "●" } else { "○" },
-                monitor.id,
-                if monitor.primary {
-                    " (основной)"
-                } else {
-                    ""
-                }
-            );
-            content = content.child(
+            monitor_list = monitor_list.child(
                 div()
-                    .id(("monitor", index))
-                    .cursor_pointer()
-                    .p_2()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .p_4()
+                    .rounded_lg()
                     .border_1()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let mut next = cx.global::<DesktopSettings>().0.settings().clone();
-                        next.monitor = Some(monitor.id.clone());
-                        this.message = match cx.global_mut::<DesktopSettings>().0.save(next) {
-                            Ok(()) => "Настройки сохранены".into(),
-                            Err(error) => error.to_string(),
-                        };
-                        cx.notify();
-                    }))
-                    .child(label),
-            );
-        }
-        let mut corners = div().flex().gap_2();
-        for (index, corner) in Corner::ALL.into_iter().enumerate() {
-            corners = corners.child(
-                div()
-                    .id(("corner", index))
-                    .cursor_pointer()
-                    .p_2()
-                    .border_1()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let mut next = cx.global::<DesktopSettings>().0.settings().clone();
-                        next.corner = corner;
-                        this.message = match cx.global_mut::<DesktopSettings>().0.save(next) {
-                            Ok(()) => "Настройки сохранены".into(),
-                            Err(error) => error.to_string(),
-                        };
-                        cx.notify();
-                    }))
-                    .child(format!(
-                        "{} {}",
-                        if settings.corner == corner {
-                            "●"
-                        } else {
-                            "○"
-                        },
-                        corner.label()
-                    )),
+                    .border_color(if selected { primary } else { border })
+                    .bg(if selected { muted } else { background })
+                    .child(
+                        Radio::new(("monitor", index))
+                            .checked(selected)
+                            .label(format!(
+                                "Экран {}{}",
+                                index + 1,
+                                if monitor.primary {
+                                    " · основной"
+                                } else {
+                                    ""
+                                }
+                            ))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                let mut next = cx.global::<DesktopSettings>().0.settings().clone();
+                                next.monitor = Some(monitor.id.clone());
+                                this.save(next, cx);
+                            })),
+                    )
+                    .child(div().flex_1())
+                    .child(div().text_sm().text_color(muted_text).child(format!(
+                        "{} × {}",
+                        monitor.area.right - monitor.area.left,
+                        monitor.area.bottom - monitor.area.top
+                    ))),
             );
         }
-        content
-            .child(corners)
-            .child(
-                div()
-                    .id("autostart")
-                    .p_2()
-                    .border_1()
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        let mut next = cx.global::<DesktopSettings>().0.settings().clone();
-                        next.autostart = !next.autostart;
-                        this.message = match cx.global_mut::<DesktopSettings>().0.save(next) {
-                            Ok(()) => "Настройки сохранены".into(),
-                            Err(error) => error.to_string(),
-                        };
-                        cx.notify();
-                    }))
-                    .child(format!(
-                        "{} Автозапуск при входе в Windows",
-                        if settings.autostart { "☑" } else { "☐" }
-                    )),
-            )
-            .child("Изменения применяются к следующим тостам. Закрытые тосты не восстанавливаются.")
-            .child(self.message.clone())
+        let mut corner_rows = div().flex().flex_col().gap_2();
+        for (row, corners) in [
+            [Corner::TopLeft, Corner::TopRight],
+            [Corner::BottomLeft, Corner::BottomRight],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let mut line = div().flex().gap_2();
+            for (column, corner) in corners.into_iter().enumerate() {
+                line = line.child(
+                    Button::new(("corner", row * 2 + column))
+                        .flex_1()
+                        .label(corner.label())
+                        .toggled(settings.corner == corner)
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            let mut next = cx.global::<DesktopSettings>().0.settings().clone();
+                            next.corner = corner;
+                            this.save(next, cx);
+                        })),
+                );
+            }
+            corner_rows = corner_rows.child(line);
+        }
+        div().size_full().flex().flex_col().font_family("Segoe UI").text_base().bg(background).text_color(foreground)
+            .child(div().px_6().pt_6().pb_5().border_b_1().border_color(border)
+                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child("Ваше пространство"))
+                .child(div().mt_2().text_sm().text_color(muted_text).child("Настройте, где появляются тосты и когда запускается приложение.")))
+            .child(div().id("settings-scroll").flex_1().min_h_0().overflow_y_scroll().p_6().flex().flex_col().gap_6()
+                .child(div().flex().flex_col().gap_3()
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Экран для тостов"))
+                    .child(monitor_list))
+                .child(div().flex().flex_col().gap_3()
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Расположение на экране"))
+                    .child(div().rounded_lg().bg(muted).p_4().child(corner_rows))
+                    .child(div().text_sm().text_color(muted_text).child("Новые тосты будут собираться в выбранном углу.")))
+                .child(div().p_4().rounded_lg().border_1().border_color(border).flex().items_center().gap_4()
+                    .child(div().flex_1().child(div().font_weight(FontWeight::SEMIBOLD).child("Запуск вместе с Windows"))
+                        .child(div().mt_1().text_sm().text_color(muted_text).child("Напоминания будут работать после входа в систему.")))
+                    .child(Switch::new("autostart").accessibility_label("Запуск вместе с Windows").checked(settings.autostart)
+                        .on_click(cx.listener(|this, checked, _, cx| {
+                            let mut next = cx.global::<DesktopSettings>().0.settings().clone();
+                            next.autostart = *checked;
+                            this.save(next, cx);
+                        }))))
+                .child(div().text_sm().text_color(muted_text).child("Настройки применяются к следующим тостам. Уже открытые тосты сохраняют своё положение; закрытые не восстанавливаются.")))
+            .child(div().px_6().py_4().border_t_1().border_color(border).flex().items_center().gap_4()
+                .child(div().flex_1().text_sm().text_color(status_color).child(self.message.clone()))
+                .child(Button::new("close-settings").primary().label("Готово").on_click(|_, window, _| window.remove_window())))
     }
 }
