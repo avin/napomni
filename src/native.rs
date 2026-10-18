@@ -3,9 +3,9 @@ use gpui::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows::Win32::{
     Foundation::{HWND, POINT},
-    Graphics::Gdi::{
-        CreateRoundRectRgn, DeleteObject, GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO,
-        MonitorFromPoint, SetWindowRgn,
+    Graphics::{
+        Dwm::{DWMWA_WINDOW_CORNER_PREFERENCE, DWMWCP_DONOTROUND, DwmSetWindowAttribute},
+        Gdi::{GetMonitorInfoW, MONITOR_DEFAULTTOPRIMARY, MONITORINFO, MonitorFromPoint},
     },
     UI::{
         HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
@@ -65,6 +65,7 @@ pub fn hide(window: &Window) {
 }
 
 pub fn show(window: &Window) {
+    square_corners(window);
     if let Ok(handle) = hwnd(window) {
         unsafe {
             let _ = ShowWindow(handle, SW_SHOW);
@@ -72,22 +73,27 @@ pub fn show(window: &Window) {
     }
 }
 
+pub fn square_corners(window: &Window) {
+    if let Ok(handle) = hwnd(window) {
+        // Windows 11 rounds top-level windows independently of GPUI styling.
+        // Earlier Windows versions already use square corners and ignore this preference.
+        unsafe {
+            let _ = DwmSetWindowAttribute(
+                handle,
+                DWMWA_WINDOW_CORNER_PREFERENCE,
+                &DWMWCP_DONOTROUND as *const _ as *const _,
+                std::mem::size_of_val(&DWMWCP_DONOTROUND) as u32,
+            );
+        }
+    }
+}
+
 pub fn place_toast(window: &Window, x: i32, y: i32, width: i32, height: i32) -> Result<()> {
+    square_corners(window);
     let handle = hwnd(window)?;
     unsafe {
         let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
         SetWindowLongPtrW(handle, GWL_EXSTYLE, style | WS_EX_NOACTIVATE.0 as isize);
-        // A native region also lets clicks in the rounded corners reach the window below.
-        let radius = (12.0 * window.scale_factor()) as i32;
-        let region = CreateRoundRectRgn(0, 0, width + 1, height + 1, radius * 2, radius * 2);
-        if region.is_invalid() {
-            bail!("Не удалось создать скругление тоста");
-        }
-        if SetWindowRgn(handle, Some(region), true) == 0 {
-            let _ = DeleteObject(region.into());
-            bail!("Не удалось применить скругление тоста");
-        }
-        // Windows owns the region after successful SetWindowRgn.
         SetWindowPos(
             handle,
             Some(HWND_TOPMOST),

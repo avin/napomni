@@ -74,7 +74,8 @@ fn schedule_demo(cx: &mut App) {
             if let Err(error) = show_demo(cx) {
                 eprintln!("Не удалось показать тосты: {error:#}");
                 let message = format!("Не удалось показать тестовые тосты: {error:#}");
-                let _ = cx.open_window(WindowOptions::default(), |_, cx| {
+                let _ = cx.open_window(WindowOptions::default(), |window, cx| {
+                    native::square_corners(window);
                     cx.new(|_| ErrorView(message))
                 });
             }
