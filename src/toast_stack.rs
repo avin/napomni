@@ -18,9 +18,9 @@ const TRANSITION: Duration = Duration::from_millis(220);
 const GAP: f32 = 12.;
 const FONT_SIZE: f32 = 16.;
 const LINE_HEIGHT: f32 = 24.;
-const BODY_TOP: f32 = 76.;
-const BODY_INSET: f32 = 22.;
-const CARD_CHROME: f32 = BODY_TOP + 40.;
+const BODY_TOP: f32 = 48.;
+const BODY_INSET: f32 = 16.;
+const CARD_CHROME: f32 = BODY_TOP + 16.;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Source {
@@ -548,7 +548,7 @@ impl Render for ToastStack {
                             + CARD_CHROME
                     })
                     .unwrap_or(180.)
-                    .max(144.);
+                    .max(CARD_CHROME + LINE_HEIGHT);
                 card.measured_width = width;
             }
         }
@@ -572,7 +572,7 @@ impl Render for ToastStack {
                     .iter()
                     .find(|c| c.snapshot.reminder_id == toast.reminder_id && !c.departing)
             })
-            .map_or(144., |c| c.height);
+            .map_or(CARD_CHROME + LINE_HEIGHT, |c| c.height);
         let mut offset = 0.;
         for (index, snapshot) in self.snapshots.iter().enumerate() {
             if let Some(card) = self
@@ -699,46 +699,22 @@ impl Render for ToastStack {
                 .child(
                     div()
                         .absolute()
-                        .top(px(18.))
-                        .left(px(BODY_INSET))
-                        .size(px(36.))
-                        .rounded(px(11.))
-                        .bg(accent.opacity(0.12))
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .child(
-                            Icon::new(IconName::Bell)
-                                .with_size(px(18.))
-                                .text_color(accent),
-                        ),
-                )
-                .child(
-                    div()
-                        .absolute()
                         .top(px(16.))
-                        .left(px(70.))
-                        .right(px(56.))
-                        .text_size(px(13.))
-                        .line_height(px(20.))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(if self.source == Source::Demo {
-                            "Пробное напоминание"
-                        } else {
-                            "Напоминание"
-                        })
-                        .child(
-                            div()
-                                .text_size(px(11.))
-                                .font_weight(FontWeight::NORMAL)
-                                .text_color(muted)
-                                .child(if card.snapshot.sound {
-                                    "Со звуком"
-                                } else {
-                                    "Без звука"
-                                }),
-                        ),
+                        .left(px(BODY_INSET))
+                        .text_color(accent)
+                        .child(Icon::new(IconName::Bell).with_size(px(18.))),
                 )
+                .when(card.snapshot.sound, |e| {
+                    e.child(
+                        div()
+                            .absolute()
+                            .top(px(16.))
+                            .left(px(44.))
+                            .text_size(px(12.))
+                            .text_color(muted)
+                            .child("Со звуком"),
+                    )
+                })
                 .child(
                     div()
                         .absolute()
@@ -746,20 +722,6 @@ impl Render for ToastStack {
                         .left(px(BODY_INSET))
                         .w(px((width - BODY_INSET * 2.).max(1.)))
                         .child(card.snapshot.text.clone()),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(BODY_INSET))
-                        .bottom(px(12.))
-                        .text_size(px(11.))
-                        .line_height(px(16.))
-                        .text_color(muted)
-                        .child(if selected {
-                            "Enter — закрыть"
-                        } else {
-                            "Смахните, чтобы закрыть"
-                        }),
                 )
                 .child(
                     div().absolute().right(px(14.)).top(px(close_top)).child(

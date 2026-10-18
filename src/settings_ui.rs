@@ -31,14 +31,14 @@ pub fn open(_: &mut Window, cx: &mut App) {
         WindowOptions {
             window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
                 None,
-                size(px(700.), px(740.)),
+                size(px(560.), px(480.)),
                 cx,
             ))),
             titlebar: Some(TitlebarOptions {
                 title: Some("Настройки".into()),
                 ..Default::default()
             }),
-            window_min_size: Some(size(px(540.), px(560.))),
+            window_min_size: Some(size(px(480.), px(400.))),
             ..Default::default()
         },
         cx,
@@ -63,7 +63,7 @@ impl SettingsView {
     fn save(&mut self, next: Settings, cx: &mut Context<Self>) {
         match cx.global_mut::<DesktopSettings>().0.save(next) {
             Ok(()) => {
-                self.message = "Изменения сохранены".into();
+                self.message.clear();
                 self.failed = false;
             }
             Err(error) => {
@@ -108,7 +108,7 @@ impl Render for SettingsView {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .p_4()
+                    .p_3()
                     .rounded_lg()
                     .border_1()
                     .border_color(if selected { primary } else { border })
@@ -163,30 +163,92 @@ impl Render for SettingsView {
             }
             corner_rows = corner_rows.child(line);
         }
-        div().size_full().flex().flex_col().font_family("Segoe UI").text_base().bg(background).text_color(foreground)
-            .child(div().px_6().pt_6().pb_5().border_b_1().border_color(border)
-                .child(div().text_2xl().font_weight(FontWeight::SEMIBOLD).child("Ваше пространство"))
-                .child(div().mt_2().text_sm().text_color(muted_text).child("Настройте, где появляются тосты и когда запускается приложение.")))
-            .child(div().id("settings-scroll").flex_1().min_h_0().overflow_y_scroll().p_6().flex().flex_col().gap_6()
-                .child(div().flex().flex_col().gap_3()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Экран для тостов"))
-                    .child(monitor_list))
-                .child(div().flex().flex_col().gap_3()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("Расположение на экране"))
-                    .child(div().rounded_lg().bg(muted).p_4().child(corner_rows))
-                    .child(div().text_sm().text_color(muted_text).child("Новые тосты будут собираться в выбранном углу.")))
-                .child(div().p_4().rounded_lg().border_1().border_color(border).flex().items_center().gap_4()
-                    .child(div().flex_1().child(div().font_weight(FontWeight::SEMIBOLD).child("Запуск вместе с Windows"))
-                        .child(div().mt_1().text_sm().text_color(muted_text).child("Напоминания будут работать после входа в систему.")))
-                    .child(Switch::new("autostart").accessibility_label("Запуск вместе с Windows").checked(settings.autostart)
-                        .on_click(cx.listener(|this, checked, _, cx| {
-                            let mut next = cx.global::<DesktopSettings>().0.settings().clone();
-                            next.autostart = *checked;
-                            this.save(next, cx);
-                        }))))
-                .child(div().text_sm().text_color(muted_text).child("Настройки применяются к следующим тостам. Уже открытые тосты сохраняют своё положение; закрытые не восстанавливаются.")))
-            .child(div().px_6().py_4().border_t_1().border_color(border).flex().items_center().gap_4()
-                .child(div().flex_1().text_sm().text_color(status_color).child(self.message.clone()))
-                .child(Button::new("close-settings").primary().label("Готово").on_click(|_, window, _| window.remove_window())))
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .font_family("Segoe UI")
+            .text_base()
+            .bg(background)
+            .text_color(foreground)
+            .child(
+                div()
+                    .id("settings-scroll")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child("Монитор"))
+                            .child(monitor_list),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child("Угол экрана"))
+                            .child(div().rounded_lg().bg(muted).p_3().child(corner_rows)),
+                    )
+                    .child(
+                        div()
+                            .p_3()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(border)
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .child(div().flex_1().child("Автозапуск при входе в Windows"))
+                            .child(
+                                Switch::new("autostart")
+                                    .accessibility_label("Запуск вместе с Windows")
+                                    .checked(settings.autostart)
+                                    .on_click(cx.listener(|this, checked, _, cx| {
+                                        let mut next =
+                                            cx.global::<DesktopSettings>().0.settings().clone();
+                                        next.autostart = *checked;
+                                        this.save(next, cx);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(muted_text)
+                            .child("Размещение изменится для новых тостов."),
+                    ),
+            )
+            .child(
+                div()
+                    .px_3()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(border)
+                    .flex()
+                    .items_center()
+                    .gap_4()
+                    .child(div().flex_1().when(!self.message.is_empty(), |e| {
+                        e.child(
+                            div()
+                                .text_sm()
+                                .text_color(status_color)
+                                .child(self.message.clone()),
+                        )
+                    }))
+                    .child(
+                        Button::new("close-settings")
+                            .primary()
+                            .label("Готово")
+                            .on_click(|_, window, _| window.remove_window()),
+                    ),
+            )
     }
 }
