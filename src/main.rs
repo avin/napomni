@@ -5,14 +5,15 @@ mod model_picker;
 mod native;
 mod reminder_ui;
 mod settings_ui;
+mod toast_stack;
 mod ui;
 
 use std::time::Duration;
 
 use anyhow::Result;
 use gpui::{
-    App, AppContext, Application, Bounds, Global, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowHandle, WindowKind, WindowOptions, point, px, size,
+    App, AppContext, Application, Bounds, Global, TitlebarOptions, WindowBounds, WindowHandle,
+    WindowOptions, px, size,
 };
 use tray_icon::{
     Icon, MouseButton, TrayIcon, TrayIconBuilder, TrayIconEvent,
@@ -22,7 +23,6 @@ use tray_icon::{
 struct Desktop {
     _tray: TrayIcon,
     main: WindowHandle<ui::MainWindow>,
-    toasts: Vec<WindowHandle<ui::Toast>>,
     demo_pending: bool,
 }
 
@@ -32,6 +32,7 @@ fn tray() -> Result<TrayIcon> {
     let menu = Menu::new();
     menu.append_items(&[
         &MenuItem::with_id("open", "Открыть напоминания", true, None),
+        &MenuItem::with_id("stack", "Открыть стопку тостов", true, None),
         &MenuItem::with_id("demo", "Показать тестовые тосты", true, None),
         &PredefinedMenuItem::separator(),
         &MenuItem::with_id("quit", "Выход", true, None),
@@ -89,97 +90,7 @@ fn schedule_demo(cx: &mut App) {
 }
 
 fn show_demo(cx: &mut App) -> Result<()> {
-    // An open card stays until the user closes it, even if the demo is requested again.
-    let previous = std::mem::take(&mut cx.global_mut::<Desktop>().toasts);
-    let mut open = Vec::new();
-    for handle in previous {
-        if handle.update(cx, |_, _, _| ()).is_ok() {
-            open.push(handle);
-        }
-    }
-    if !open.is_empty() {
-        cx.global_mut::<Desktop>().toasts = open;
-        return Ok(());
-    }
-    let placement = cx.global::<settings_ui::DesktopSettings>().0.placement()?;
-    let scale = placement.scale;
-    for (index, (title, text, border)) in [
-        (
-            "Пора размяться",
-            "Встаньте, расправьте плечи и посмотрите вдаль. Ёжик тоже делает перерыв!",
-            0x5285f5,
-        ),
-        (
-            "Стакан воды",
-            "Небольшая пауза: налейте воды и отдохните от экрана.",
-            0x29a879,
-        ),
-        (
-            "Проверка русского текста",
-            "Съешь ещё этих мягких французских булок, да выпей чаю. 0123456789",
-            0xb17bea,
-        ),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let Some(rect) = placement.card(index, 156.) else {
-            break;
-        };
-        let win_notifi_toast::placement::Rect {
-            x,
-            y,
-            width,
-            height,
-        } = rect;
-        let handle = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(Bounds::new(
-                    point(px(x as f32 / scale), px(y as f32 / scale)),
-                    size(px(width as f32 / scale), px(height as f32 / scale)),
-                ))),
-                titlebar: None,
-                kind: WindowKind::PopUp,
-                focus: false,
-                show: false,
-                is_movable: false,
-                is_resizable: false,
-                is_minimizable: false,
-                window_background: WindowBackgroundAppearance::Transparent,
-                ..Default::default()
-            },
-            |window, cx| {
-                window.set_window_title(title);
-                cx.new(|_| ui::Toast {
-                    title: title.into(),
-                    text: text.into(),
-                    border,
-                    reminder_id: None,
-                })
-            },
-        )?;
-        let placement = handle
-            .update(cx, |_, window, cx| {
-                native::place_toast(window, cx, x, y, width, height)
-            })
-            .and_then(|result| result);
-        let placement = match placement {
-            Ok(placement) => placement,
-            Err(error) => {
-                let _ = handle.update(cx, |_, window, _| window.remove_window());
-                return Err(error);
-            }
-        };
-        cx.spawn(async move |cx| {
-            if let Err(error) = placement.await {
-                let _ = handle.update(cx, |_, window, _| window.remove_window());
-                eprintln!("Не удалось разместить тост: {error:#}");
-            }
-        })
-        .detach();
-        cx.global_mut::<Desktop>().toasts.push(handle);
-    }
-    Ok(())
+    toast_stack::show_demo(cx)
 }
 
 struct ErrorView(String);
@@ -229,7 +140,6 @@ fn main() {
             cx.set_global(Desktop {
                 _tray: tray,
                 main,
-                toasts: Vec::new(),
                 demo_pending: false,
             });
             cx.spawn(async |cx| {
@@ -269,6 +179,7 @@ fn main() {
                                 match event.id.as_ref() {
                                     "open" => open_main(cx),
                                     "demo" => schedule_demo(cx),
+                                    "stack" => toast_stack::focus(cx),
                                     "quit" => {
                                         reminder_ui::shutdown(cx);
                                         cx.quit();

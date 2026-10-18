@@ -194,6 +194,68 @@ pub fn place_toast(
     }))
 }
 
+/// Restrict both painting and mouse input to the visible square card surfaces.
+/// Alpha compositing by itself does not make a Windows popup click-through.
+pub fn toast_region(
+    window: &Window,
+    cx: &gpui::App,
+    rectangles: Vec<win_notifi_toast::placement::Rect>,
+) -> Result<gpui::Task<Result<()>>> {
+    use windows::Win32::Graphics::Gdi::{
+        CombineRgn, CreateRectRgn, DeleteObject, HGDIOBJ, RGN_OR, SetWindowRgn,
+    };
+    let handle = hwnd(window)?;
+    // SetWindowRgn also sends window-position messages synchronously.
+    Ok(cx.foreground_executor().spawn(async move {
+        unsafe {
+            let region = CreateRectRgn(0, 0, 0, 0);
+            anyhow::ensure!(!region.0.is_null(), "Не удалось создать область стопки");
+            for rect in rectangles {
+                let part = CreateRectRgn(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
+                if part.0.is_null() {
+                    let _ = DeleteObject(HGDIOBJ(region.0));
+                    bail!("Не удалось создать область карточки");
+                }
+                let combined = CombineRgn(Some(region), Some(region), Some(part), RGN_OR);
+                let _ = DeleteObject(HGDIOBJ(part.0));
+                if combined.0 == 0 {
+                    let _ = DeleteObject(HGDIOBJ(region.0));
+                    bail!("Не удалось объединить области карточек");
+                }
+            }
+            if SetWindowRgn(handle, Some(region), true) == 0 {
+                let _ = DeleteObject(HGDIOBJ(region.0));
+                bail!("Не удалось применить область стопки");
+            }
+            // Windows owns region after successful SetWindowRgn.
+        }
+        Ok(())
+    }))
+}
+
+pub fn toast_allow_focus(window: &Window, allow: bool) {
+    if let Ok(handle) = hwnd(window) {
+        unsafe {
+            let style = GetWindowLongPtrW(handle, GWL_EXSTYLE);
+            let style = if allow {
+                style & !(WS_EX_NOACTIVATE.0 as isize)
+            } else {
+                style | WS_EX_NOACTIVATE.0 as isize
+            };
+            SetWindowLongPtrW(handle, GWL_EXSTYLE, style);
+        }
+    }
+}
+
+pub fn cursor_position() -> Option<(i32, i32)> {
+    use windows::Win32::{Foundation::POINT, UI::WindowsAndMessaging::GetCursorPos};
+    let mut point = POINT::default();
+    unsafe {
+        GetCursorPos(&mut point).ok()?;
+    }
+    Some((point.x, point.y))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
