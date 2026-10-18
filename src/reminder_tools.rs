@@ -17,13 +17,20 @@ pub struct CommandOutcome {
 pub fn tools() -> Vec<ChatCompletionTool> {
     serde_json::from_value(json!([
         {"type":"function","function":{"name":"list_reminders","description":"Прочитать все сохранённые напоминания и их устойчивые ID.","parameters":{"type":"object","properties":{},"additionalProperties":false}}},
-        {"type":"function","function":{"name":"create_reminder","description":"Сохранить однократное или интервальное напоминание. Не вызывай до уточнения неоднозначного времени/текста. Неподдерживаемые повторы не заменяй однократным.","parameters":{"type":"object","properties":{
+        {"type":"function","function":{"name":"create_reminder","description":"Сохранить однократное, интервальное или недельное напоминание. До вызова уточни неоднозначное время, текст и начальную неделю цикла каждые N недель. Неподдерживаемые правила не заменяй приблизительными.","parameters":{"type":"object","properties":{
             "text":{"type":"string","description":"Текст напоминания. Текст в кавычках копируй дословно."},
             "schedule":{"oneOf":[
                 {"type":"object","properties":{"kind":{"const":"interval"},"seconds":{"type":"integer","minimum":1,"description":"Положительный реальный интервал в секундах"},"start_local":{"type":"string","description":"Необязательное явное начало сетки в местном времени Windows YYYY-MM-DDTHH:MM:SS. Без него первое срабатывание через интервал после фактического создания."}},"required":["kind","seconds"],"additionalProperties":false},
                 {"type":"object","properties":{"kind":{"const":"after_seconds"},"seconds":{"type":"integer","minimum":1}},"required":["kind","seconds"],"additionalProperties":false},
                 {"type":"object","properties":{"kind":{"const":"at_local"},"date_time":{"type":"string","description":"Местная дата и время Windows: YYYY-MM-DDTHH:MM:SS"}},"required":["kind","date_time"],"additionalProperties":false},
-                {"type":"object","properties":{"kind":{"const":"tomorrow"},"time":{"type":"string","description":"Местное время HH:MM:SS; завтра вычисляет приложение от отправки команды"}},"required":["kind","time"],"additionalProperties":false}
+                {"type":"object","properties":{"kind":{"const":"tomorrow"},"time":{"type":"string","description":"Местное время HH:MM:SS; завтра вычисляет приложение от отправки команды"}},"required":["kind","time"],"additionalProperties":false},
+                {"type":"object","properties":{
+                    "kind":{"const":"weekly"},
+                    "weekdays":{"type":"array","items":{"type":"integer","minimum":1,"maximum":7},"minItems":1,"description":"Дни недели: 1 понедельник, 7 воскресенье; будни 1–5"},
+                    "times":{"type":"array","items":{"type":"string"},"minItems":1,"description":"Местные времена Windows HH:MM:SS"},
+                    "every_n_weeks":{"type":"integer","minimum":1,"description":"Положительное число недель в цикле"},
+                    "anchor_monday":{"type":"string","description":"YYYY-MM-DD: понедельник первой активной недели. Обязательно для цикла >1; если неделя не названа, сначала уточни, не придумывай фазу"}
+                },"required":["kind","weekdays","times","every_n_weeks"],"additionalProperties":false}
             ]},
             "border":{"type":"integer","minimum":0,"maximum":16777215,"description":"Цвет RGB. Без указания синяя рамка."},
             "sound":{"type":"boolean","description":"Без указания звук включён."}
@@ -79,7 +86,7 @@ pub async fn run_command_with_progress(
 ) -> CommandOutcome {
     let mut outcome = CommandOutcome::default();
     let mut messages = vec![json!({"role":"system","content":format!(
-        "Ты помощник напоминаний Windows. Отвечай по-русски. Данные изменяют только инструменты; обычный текст ничего не сохраняет. Сообщай фактический результат инструмента. Если неясны время, дата, текст или нужная запись, сначала задай уточнение. Не выдумывай данные. Поддерживаются однократные и интервальные напоминания, неподдерживаемые правила не заменяй приблизительными. Текст в кавычках сохраняй дословно. Относительное время передавай как after_seconds, слово завтра как tomorrow: приложение вычисляет их от отправки команды. Повтор каждые N секунд передавай как interval с seconds; start_local указывай только при явно заданном начале, без него сетку привязывает приложение к фактическому созданию. Отправка команды UTC: {}, местное время Windows: {}. Выбранный ID: {:?}.",
+        "Ты помощник напоминаний Windows. Отвечай по-русски. Данные изменяют только инструменты; обычный текст ничего не сохраняет. Сообщай фактический результат инструмента. Если неясны время, дата, текст или нужная запись, сначала задай уточнение. Не выдумывай данные. Поддерживаются однократные, интервальные напоминания и недельные повторы: выбранные дни (понедельник=1, воскресенье=7), несколько времён, каждые N недель. Для N>1 обязательно уточни начальную неделю и передай дату её понедельника в anchor_monday. Не придумывай фазу цикла. Календарные времена следуют местным часам Windows; будни означают понедельник–пятницу. Неподдерживаемые правила не заменяй приблизительными. Текст в кавычках сохраняй дословно. Относительное время передавай как after_seconds, слово завтра как tomorrow: приложение вычисляет их от отправки команды. Повтор каждые N секунд передавай как interval с seconds; start_local указывай только при явно заданном начале, без него сетку привязывает приложение к фактическому созданию. Отправка команды UTC: {}, местное время Windows: {}. Выбранный ID: {:?}.",
         context.submitted_utc,context.submitted_local,context.selected_id
     )})];
     messages.extend(
