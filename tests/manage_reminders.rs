@@ -235,3 +235,78 @@ fn invalid_edit_does_not_change_data_or_consume_undo_and_time_edit_keeps_other_p
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 1);
 }
+
+#[test]
+fn recurring_resume_and_undo_skip_elapsed_grid_points_only_for_the_affected_record() {
+    let directory = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::new());
+    let mut app = Application::open(
+        clock.clone(),
+        Box::new(JsonStore::new(directory.path().join("data.json"))),
+    )
+    .unwrap();
+    let context = CommandContext::capture(clock.as_ref(), "Создай", None);
+    let id = app
+        .create(
+            CreateReminder {
+                text: "Каждую минуту".into(),
+                schedule: ScheduleInput::Interval {
+                    seconds: 60,
+                    start_local: None,
+                },
+                border: None,
+                sound: None,
+            },
+            &context,
+        )
+        .unwrap()
+        .id;
+    let other = app
+        .create(
+            CreateReminder {
+                text: "Другой".into(),
+                schedule: ScheduleInput::Interval {
+                    seconds: 120,
+                    start_local: None,
+                },
+                border: None,
+                sound: None,
+            },
+            &context,
+        )
+        .unwrap()
+        .id;
+    clock.advance(60);
+    app.tick().unwrap();
+    let snapshot = app.open_toasts()[0].clone();
+    app.update(
+        id,
+        ReminderPatch {
+            sound: Some(false),
+            ..Default::default()
+        },
+        &CommandContext::capture(clock.as_ref(), "Без звука", Some(id)),
+    )
+    .unwrap();
+    assert_eq!(app.open_toasts(), &[snapshot]);
+    app.close_toast(id);
+    clock.advance(75);
+    app.set_paused(id, true).unwrap();
+    app.undo().unwrap();
+    app.tick().unwrap();
+    assert_eq!(app.open_toasts().len(), 1);
+    assert_eq!(app.open_toasts()[0].reminder_id, other);
+    clock.advance(45);
+    app.tick().unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, id);
+    assert!(!app.open_toasts()[0].sound);
+    app.delete(id).unwrap();
+    app.close_toast(id);
+    clock.advance(70);
+    app.undo().unwrap();
+    app.tick().unwrap();
+    assert!(app.open_toasts().iter().all(|t| t.reminder_id != id));
+    clock.advance(50);
+    app.tick().unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, id);
+}
