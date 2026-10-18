@@ -58,6 +58,7 @@ impl Application {
         if let Some(schedule) = patch.schedule {
             reminder.schedule = schedule.resolve(context, self.clock())?;
             reminder.completed = false;
+            reminder.calendar_cursor = None;
         }
         if let Some(border) = patch.border {
             ensure!(border <= 0xffffff, "Цвет должен быть RGB от 0 до 16777215");
@@ -84,11 +85,24 @@ impl Application {
     }
     fn commit_change(&mut self, mut next: Persisted, undo: UndoEntry) -> Result<()> {
         let id = undo.id;
+        self.skip_calendar_through_now(&mut next, id);
         next.undo = Some(undo);
         self.store.save(&next)?;
         self.state = next;
         self.skip_through(id, self.clock.sample().utc);
         Ok(())
+    }
+    fn skip_calendar_through_now(&self, next: &mut Persisted, id: ReminderId) {
+        if let Some(reminder) = next.reminders.iter_mut().find(|r| r.id == id)
+            && reminder.schedule.is_calendar_repeating()
+        {
+            let now = self.clock.local_at(self.clock.sample().utc);
+            reminder.calendar_cursor = Some(
+                reminder
+                    .calendar_cursor
+                    .map_or(now, |cursor| cursor.max(now)),
+            );
+        }
     }
     pub fn set_paused(&mut self, id: ReminderId, paused: bool) -> Result<Reminder> {
         let index = self
@@ -171,6 +185,7 @@ impl Application {
             next.reminders.retain(|r| r.id != undo.id);
         }
         next.undo = None;
+        self.skip_calendar_through_now(&mut next, undo.id);
         self.store.save(&next)?;
         self.state = next;
         self.skip_through(undo.id, self.clock.sample().utc);
