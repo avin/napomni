@@ -3,6 +3,7 @@ use anyhow::{Context, Result, ensure};
 use chrono::{DateTime, Duration, Local, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     sync::Arc,
@@ -181,6 +182,8 @@ pub struct CreateReminder {
 pub struct Persisted {
     pub reminders: Vec<Reminder>,
     pub next_id: ReminderId,
+    #[serde(default)]
+    pub undo: Option<crate::mutations::UndoEntry>,
 }
 pub trait ReminderStore: Send {
     fn load(&self) -> Result<Persisted>;
@@ -225,6 +228,7 @@ pub struct Application {
     pub(crate) toasts: Vec<ToastSnapshot>,
     pub(crate) last: TimeSample,
     pub(crate) sequence: u64,
+    pub(crate) eligible_after: HashMap<ReminderId, DateTime<Utc>>,
 }
 impl Application {
     pub fn open(clock: Arc<dyn Clock>, store: Box<dyn ReminderStore>) -> Result<Self> {
@@ -237,6 +241,7 @@ impl Application {
             toasts: vec![],
             last,
             sequence: 0,
+            eligible_after: HashMap::new(),
         };
         app.resume()?;
         Ok(app)
@@ -278,10 +283,22 @@ impl Application {
         };
         let mut next = self.state.clone();
         next.next_id = id;
+        next.undo = Some(crate::mutations::UndoEntry {
+            id,
+            before: None,
+            index: next.reminders.len(),
+        });
         next.reminders.push(reminder.clone());
         self.store.save(&next)?;
         self.state = next;
+        self.skip_through(id, self.clock.sample().utc);
         Ok(reminder)
+    }
+    pub(crate) fn skip_through(&mut self, id: ReminderId, now: DateTime<Utc>) {
+        self.eligible_after
+            .entry(id)
+            .and_modify(|at| *at = (*at).max(now))
+            .or_insert(now);
     }
     /// After startup or suspension, elapsed occurrences are consumed without a toast.
     pub fn resume(&mut self) -> Result<()> {
@@ -348,7 +365,7 @@ impl Application {
         Ok(())
     }
 }
-fn quoted_text(source: &str) -> Option<String> {
+pub(crate) fn quoted_text(source: &str) -> Option<String> {
     for (open, close) in [('«', '»'), ('"', '"'), ('“', '”')] {
         if let Some(start) = source.find(open) {
             let rest = &source[start + open.len_utf8()..];

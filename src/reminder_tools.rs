@@ -15,7 +15,7 @@ pub struct CommandOutcome {
     pub error: Option<String>,
 }
 pub fn tools() -> Vec<ChatCompletionTool> {
-    serde_json::from_value(json!([
+    let mut tools:Vec<ChatCompletionTool>=serde_json::from_value(json!([
         {"type":"function","function":{"name":"list_reminders","description":"Прочитать все сохранённые напоминания и их устойчивые ID.","parameters":{"type":"object","properties":{},"additionalProperties":false}}},
         {"type":"function","function":{"name":"create_reminder","description":"Сохранить однократное напоминание. Не вызывай до уточнения неоднозначного времени/текста. Повторы пока не поддерживаются: объясни это, не заменяй однократным.","parameters":{"type":"object","properties":{
             "text":{"type":"string","description":"Текст напоминания. Текст в кавычках копируй дословно."},
@@ -27,7 +27,15 @@ pub fn tools() -> Vec<ChatCompletionTool> {
             "border":{"type":"integer","minimum":0,"maximum":16777215,"description":"Цвет RGB. Без указания синяя рамка."},
             "sound":{"type":"boolean","description":"Без указания звук включён."}
         },"required":["text","schedule"],"additionalProperties":false}}}
-    ])).expect("static tool definitions")
+    ])).expect("static tool definitions");
+    let schedule = tools[1]
+        .function
+        .parameters
+        .as_ref()
+        .expect("create parameters")["properties"]["schedule"]
+        .clone();
+    tools.extend(crate::mutation_tools::tools(schedule));
+    tools
 }
 pub fn execute_tool(
     app: &mut Application,
@@ -57,7 +65,7 @@ pub fn execute_tool(
                 json!({"ok":true,"reminder":reminder,"schedule_description":description,"fact":format!("Сохранено #{}: «{}». {}",reminder.id,reminder.text,description)}),
             )
         }
-        _ => bail!("Неизвестный инструмент. Данные не изменены"),
+        _ => crate::mutation_tools::execute(app, name, arguments, context),
     }
 }
 pub async fn run_command(
@@ -78,7 +86,7 @@ pub async fn run_command_with_progress(
 ) -> CommandOutcome {
     let mut outcome = CommandOutcome::default();
     let mut messages = vec![json!({"role":"system","content":format!(
-        "Ты помощник напоминаний Windows. Отвечай по-русски. Данные изменяют только инструменты; обычный текст ничего не сохраняет. Сообщай фактический результат инструмента. Если неясны время, дата, текст или нужная запись, сначала задай уточнение. Не выдумывай данные. Сейчас поддерживаются только однократные напоминания, неподдерживаемые правила не заменяй приблизительными. Текст в кавычках сохраняй дословно. Относительное время передавай как after_seconds, слово завтра как tomorrow: приложение вычисляет их от отправки команды. Отправка команды UTC: {}, местное время Windows: {}. Выбранный ID: {:?}.",
+        "Ты помощник напоминаний Windows. Отвечай по-русски. Данные изменяют только инструменты; обычный текст ничего не сохраняет. Сообщай фактический результат инструмента. Если неясны время, дата, текст или нужная запись, сначала задай уточнение. Не выдумывай данные. Сейчас поддерживаются только однократные напоминания, неподдерживаемые правила не заменяй приблизительными. При редактировании передавай ТОЛЬКО явно названные свойства patch. Выбранный пользователем ID обязателен для изменения; одинаковые тексты разных записей не дают права выбрать произвольную. Без выбранного ID прочитай список и уточни неоднозначность. Для паузы, удаления и отмены используй соответствующие инструменты. Текст в кавычках сохраняй дословно. Относительное время передавай как after_seconds, слово завтра как tomorrow: приложение вычисляет их от отправки команды. Отправка команды UTC: {}, местное время Windows: {}. Выбранный ID: {:?}.",
         context.submitted_utc,context.submitted_local,context.selected_id
     )})];
     messages.extend(
