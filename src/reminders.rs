@@ -96,22 +96,8 @@ pub enum Schedule {
     },
 }
 impl Schedule {
-    pub fn next_after(&self, after: DateTime<Utc>, _clock: &dyn Clock) -> Option<DateTime<Utc>> {
-        let at = match self {
-            Self::Constrained { base, limits } => {
-                return limits.next_after(base, after, _clock, None);
-            }
-            Self::Once { at } => Some(*at),
-            Self::Interval {
-                anchor_utc,
-                period_seconds,
-            } => return crate::interval::next_after(*anchor_utc, *period_seconds, after),
-            Self::OnceLocal { date_time } => _clock.resolve_local(*date_time).into_iter().min(),
-            Self::Weekly { rule } => rule.next_after(after, _clock, None),
-            Self::Monthly { rule } => rule.next_after(after, _clock, None),
-            Self::Yearly { rule } => rule.next_after(after, _clock, None),
-        };
-        at.filter(|at| *at > after)
+    pub fn next_after(&self, after: DateTime<Utc>, clock: &dyn Clock) -> Option<DateTime<Utc>> {
+        self.next_after_cursor(after, clock, None)
     }
     pub fn next_after_cursor(
         &self,
@@ -119,13 +105,19 @@ impl Schedule {
         clock: &dyn Clock,
         cursor: Option<NaiveDateTime>,
     ) -> Option<DateTime<Utc>> {
-        match self {
+        let at = match self {
+            Self::Once { at } => Some(*at),
+            Self::OnceLocal { date_time } => clock.resolve_local(*date_time).into_iter().min(),
+            Self::Interval {
+                anchor_utc,
+                period_seconds,
+            } => crate::interval::next_after(*anchor_utc, *period_seconds, after),
             Self::Constrained { base, limits } => limits.next_after(base, after, clock, cursor),
             Self::Weekly { rule } => rule.next_after(after, clock, cursor),
             Self::Monthly { rule } => rule.next_after(after, clock, cursor),
             Self::Yearly { rule } => rule.next_after(after, clock, cursor),
-            _ => self.next_after(after, clock),
-        }
+        };
+        at.filter(|at| *at > after)
     }
     pub fn is_calendar_repeating(&self) -> bool {
         if let Self::Constrained { base, .. } = self {
@@ -375,7 +367,37 @@ pub struct Application {
     pub(crate) sequence: u64,
     pub(crate) eligible_after: HashMap<ReminderId, DateTime<Utc>>,
 }
+struct StagedStore;
+impl ReminderStore for StagedStore {
+    fn load(&self) -> Result<Persisted> {
+        Ok(Persisted::default())
+    }
+    fn save(&self, _: &Persisted) -> Result<()> {
+        Ok(())
+    }
+}
 impl Application {
+    /// Apply mutations and their durable receipt in a single real storage write.
+    /// Failed operations leave both saved data and runtime scheduling state intact.
+    pub(crate) fn transaction<R>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> Result<R>,
+    ) -> Result<R> {
+        let mut staged = Self {
+            clock: self.clock.clone(),
+            store: Box::new(StagedStore),
+            state: self.state.clone(),
+            toasts: self.toasts.clone(),
+            last: self.last,
+            sequence: self.sequence,
+            eligible_after: self.eligible_after.clone(),
+        };
+        let result = operation(&mut staged)?;
+        self.store.save(&staged.state)?;
+        std::mem::swap(&mut self.store, &mut staged.store);
+        *self = staged;
+        Ok(result)
+    }
     pub fn open(clock: Arc<dyn Clock>, store: Box<dyn ReminderStore>) -> Result<Self> {
         let state = store.load()?;
         let last = clock.sample();
