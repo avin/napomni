@@ -177,3 +177,51 @@ fn committed_tool_result_survives_failure_of_final_model_response() {
     );
     server.join().unwrap();
 }
+#[test]
+fn interval_chat_exposes_schema_and_returns_durable_grid_facts() {
+    let (provider, server) = server(vec![
+        completion(
+            json!({"role":"assistant","content":null,"tool_calls":[{"id":"interval1","type":"function","function":{"name":"create_reminder","arguments":json!({"text":"Вода","schedule":{"kind":"interval","seconds":600}}).to_string()}}]}),
+        ),
+        completion(json!({"role":"assistant","content":"Готово"})),
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(SystemClock);
+    let app = Arc::new(Mutex::new(
+        Application::open(
+            clock.clone(),
+            Box::new(JsonStore::new(dir.path().join("data.json"))),
+        )
+        .unwrap(),
+    ));
+    let context =
+        CommandContext::capture(clock.as_ref(), "Напоминай пить воду каждые 10 минут", None);
+    let history = vec![Message {
+        role: "user".into(),
+        content: context.source.clone(),
+    }];
+    let outcome = tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(run_command(&provider, &history, context, app.clone()));
+    assert!(outcome.error.is_none());
+    assert!(outcome.facts[0].contains("10 мин"));
+    let requests = server.join().unwrap();
+    let variants = requests[0]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["function"]["name"] == "create_reminder")
+        .unwrap()["function"]["parameters"]["properties"]["schedule"]["oneOf"]
+        .as_array()
+        .unwrap();
+    assert!(
+        variants
+            .iter()
+            .any(|variant| variant["properties"]["kind"]["const"] == "interval")
+    );
+    let result: Value =
+        serde_json::from_str(requests[1]["messages"][3]["content"].as_str().unwrap()).unwrap();
+    assert_eq!(result["reminder"]["schedule"]["kind"], "interval");
+    assert_eq!(result["reminder"]["schedule"]["period_seconds"], 600);
+    assert_eq!(app.lock().unwrap().reminders().len(), 1);
+}
