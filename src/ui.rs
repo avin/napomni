@@ -6,7 +6,7 @@ use std::{sync::mpsc, time::Duration};
 use win_notifi_toast::chat::{ChatSession, Connection, Provider};
 use win_notifi_toast::{
     reminder_tools::{CommandOutcome, run_command_with_progress},
-    reminders::CommandContext,
+    reminders::{CommandContext, ReminderId},
 };
 
 enum ChatEvent {
