@@ -181,6 +181,7 @@ fn main() {
                                     "demo" => schedule_demo(cx),
                                     "stack" => toast_stack::focus(cx),
                                     "quit" => {
+                                        reminder_ui::shutdown(cx);
                                         cx.quit();
                                         return;
                                     }
