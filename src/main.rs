@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod input;
+mod model_picker;
 mod native;
 mod settings_ui;
 mod ui;
