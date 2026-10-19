@@ -144,10 +144,55 @@ pub fn hide(window: &Window) {
 pub fn show(window: &Window) {
     square_corners(window);
     if let Ok(handle) = hwnd(window) {
+        if let Err(error) = set_window_icons(handle) {
+            eprintln!("Не удалось установить иконку окна: {error:#}");
+        }
         unsafe {
             let _ = ShowWindow(handle, SW_SHOW);
         }
     }
+}
+
+fn set_window_icons(handle: HWND) -> Result<()> {
+    use windows::{
+        Win32::{
+            Foundation::{LPARAM, WPARAM},
+            System::LibraryLoader::GetModuleHandleW,
+            UI::{
+                HiDpi::{GetDpiForWindow, GetSystemMetricsForDpi},
+                WindowsAndMessaging::{
+                    ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED, LoadImageW, SM_CXICON,
+                    SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_SETICON,
+                },
+            },
+        },
+        core::PCWSTR,
+    };
+    unsafe {
+        let module = GetModuleHandleW(None)?;
+        let dpi = GetDpiForWindow(handle);
+        for (kind, width, height) in [
+            (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
+            (ICON_BIG, SM_CXICON, SM_CYICON),
+        ] {
+            let icon = LoadImageW(
+                Some(module.into()),
+                PCWSTR(1 as _),
+                IMAGE_ICON,
+                GetSystemMetricsForDpi(width, dpi),
+                GetSystemMetricsForDpi(height, dpi),
+                LR_SHARED,
+            )?;
+            // Shared resource handles live for the process lifetime; do not destroy them.
+            SendMessageW(
+                handle,
+                WM_SETICON,
+                Some(WPARAM(kind as usize)),
+                Some(LPARAM(icon.0 as isize)),
+            );
+        }
+    }
+    Ok(())
 }
 
 pub fn square_corners(window: &Window) {

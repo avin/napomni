@@ -8125,6 +8125,7 @@ dependencies = [
  "anyhow",
  "async-openai",
  "chrono",
+ "embed-resource",
  "gpui-kit",
  "raw-window-handle",
  "reqwest",

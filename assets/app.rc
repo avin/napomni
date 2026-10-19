@@ -1,0 +1,2 @@
+// GPUI loads resource #1 for the window title bar and taskbar.
+1 ICON "app.ico"

@@ -893,16 +893,9 @@ impl MainWindow {
             .as_ref()
             .map(|s| s.messages().to_vec())
             .unwrap_or_default();
-        let mut history = div()
-            .id("chat-history")
-            .track_scroll(&self.history_scroll)
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .p_3()
-            .flex()
-            .flex_col()
-            .gap_3();
+        // Keep padding inside a child: GPUI adds it to the full viewport height
+        // when the scroll container itself has no children.
+        let mut history = div().p_3().flex().flex_col().gap_3();
         for (index, m) in messages.into_iter().enumerate() {
             let user = m.role == "user";
             let action = m.result_for.is_some();
@@ -1030,7 +1023,14 @@ impl MainWindow {
                                 })),
                         ),
                 )
-                .child(scroll_panel(history, &self.history_scroll))
+                .child(scroll_panel(
+                    div()
+                        .id("chat-history")
+                        .track_scroll(&self.history_scroll)
+                        .overflow_y_scroll()
+                        .child(history),
+                    &self.history_scroll,
+                ))
                 .child(
                     div()
                         .p_3()

@@ -35,7 +35,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
     window.open_dialog(cx, move |dialog, window, _| {
         dialog.title("Размещение тостов").width(px(520.)).child(
             div()
-                .h((window.viewport_size().height - px(180.)).min(px(300.)))
+                .h((window.viewport_size().height - px(180.)).min(px(340.)))
                 .child(settings.clone()),
         )
     });

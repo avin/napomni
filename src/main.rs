@@ -35,25 +35,11 @@ fn tray() -> Result<TrayIcon> {
         &PredefinedMenuItem::separator(),
         &MenuItem::with_id("quit", "Выход", true, None),
     ])?;
-    // A high contrast bell, rasterized in Rust so no external asset is needed.
-    let mut rgba = vec![0; 32 * 32 * 4];
-    for y in 0_i32..32 {
-        for x in 0_i32..32 {
-            let bell = ((8..24).contains(&x) && (11..23).contains(&y))
-                || ((x - 16).pow(2) + (y - 11).pow(2) < 64 && y <= 11)
-                || ((6..26).contains(&x) && (23..26).contains(&y))
-                || ((x - 16).pow(2) + (y - 28).pow(2) < 7);
-            if bell {
-                let offset = ((y * 32 + x) * 4) as usize;
-                rgba[offset..offset + 4].copy_from_slice(&[105, 151, 255, 255]);
-            }
-        }
-    }
     Ok(TrayIconBuilder::new()
         .with_tooltip("Напоминания")
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
-        .with_icon(Icon::from_rgba(rgba, 32, 32)?)
+        .with_icon(Icon::from_resource(1, Some((32, 32)))?)
         .build()?)
 }
 
