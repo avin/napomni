@@ -24,6 +24,21 @@ use win_notifi_toast::{
 
 const PANEL_HEADER_HEIGHT: f32 = 52.;
 
+#[derive(IntoElement)]
+struct TextLineIcon(Icon);
+
+impl gpui::RenderOnce for TextLineIcon {
+    fn render(self, window: &mut Window, _: &mut gpui::App) -> impl IntoElement {
+        // Center on the first text line, even when the adjacent text wraps.
+        div()
+            .h(window.line_height())
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .child(self.0)
+    }
+}
+
 enum ChatEvent {
     Fact(String),
     Finished(Result<CommandOutcome, String>),
@@ -635,7 +650,17 @@ impl MainWindow {
                     .ghost()
                     .small()
                     .selected(self.filter == filter)
-                    .label(format!("{label}  {}", counts[index]))
+                    .label(label)
+                    .accessibility_label(format!("{label}  {}", counts[index]))
+                    .child(
+                        div()
+                            .font_weight(if counts[index] > 0 {
+                                FontWeight::BOLD
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .child(counts[index].to_string()),
+                    )
                     .on_click(cx.listener(move |v, _, _, cx| {
                         v.filter = filter;
                         cx.notify();
@@ -706,8 +731,10 @@ impl MainWindow {
                                             .items_start()
                                             .text_sm()
                                             .text_color(t.muted_foreground)
-                                            .child(Icon::new(IconName::Clock).small())
-                                            .child(description.clone()),
+                                            .child(TextLineIcon(Icon::new(IconName::Clock).small()))
+                                            .child(
+                                                div().flex_1().min_w_0().child(description.clone()),
+                                            ),
                                     )
                                     .when(r.sound, |e| {
                                         e.child(
@@ -910,8 +937,9 @@ impl MainWindow {
             .is_some_and(|s| !s.connection().model.is_empty());
         let chat =
             div()
-                .w(gpui::relative(0.46))
-                .min_w(px(370.))
+                .flex_1()
+                .flex_grow(1.5)
+                .min_w_0()
                 .flex()
                 .flex_col()
                 .min_h_0()
@@ -1140,7 +1168,7 @@ fn show_probe_result(message: String, success: bool, window: &mut Window, cx: &m
                     .flex()
                     .items_start()
                     .gap_3()
-                    .child(
+                    .child(TextLineIcon(
                         Icon::new(if success {
                             IconName::CircleCheck
                         } else {
@@ -1151,7 +1179,7 @@ fn show_probe_result(message: String, success: bool, window: &mut Window, cx: &m
                         } else {
                             theme.danger
                         }),
-                    )
+                    ))
                     .child(div().flex_1().min_w_0().child(message.clone())),
             )
             .footer(
