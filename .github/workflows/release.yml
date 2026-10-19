@@ -1,0 +1,79 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*.[0-9]*.[0-9]*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_TARGET_DIR: target
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set application version from tag
+        run: |
+          $tag = $env:GITHUB_REF_NAME
+          if ($tag -cnotmatch '^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\z') {
+            throw "Expected a release tag like v1.0.0, got '$tag'."
+          }
+          $version = $tag.Substring(1)
+          $patterns = @{
+            'Cargo.toml' = '(?m)(^version = ")[^"]+("\r?$)'
+            'Cargo.lock' = '(?m)(^name = "win-notifi-toast"\r?\nversion = ")[^"]+("\r?$)'
+          }
+          foreach ($path in $patterns.Keys) {
+            $content = Get-Content -LiteralPath $path -Raw
+            $pattern = [regex]::new($patterns[$path])
+            if ($pattern.Matches($content).Count -ne 1) {
+              throw "Expected exactly one application version in $path."
+            }
+            $content = $pattern.Replace($content, '${1}' + $version + '${2}')
+            Set-Content -LiteralPath $path -Value $content -Encoding utf8 -NoNewline
+          }
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Run tests
+        run: cargo test --locked --target x86_64-pc-windows-msvc
+
+      - name: Build application
+        run: cargo build --release --locked --target x86_64-pc-windows-msvc
+
+      - name: Package application
+        run: |
+          New-Item -ItemType Directory -Path dist | Out-Null
+          Copy-Item -LiteralPath 'target/x86_64-pc-windows-msvc/release/win-notifi-toast.exe' -Destination dist
+          Copy-Item -LiteralPath README.md -Destination dist
+          Compress-Archive -LiteralPath 'dist/win-notifi-toast.exe', 'dist/README.md' -DestinationPath "dist/win-notifi-toast-$env:GITHUB_REF_NAME-windows-x64.zip"
+
+      - name: Create and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create $env:GITHUB_REF_NAME `
+            'dist/win-notifi-toast.exe' `
+            "dist/win-notifi-toast-$env:GITHUB_REF_NAME-windows-x64.zip" `
+            --repo $env:GITHUB_REPOSITORY `
+            --verify-tag `
+            --title "Напоминания Windows $env:GITHUB_REF_NAME" `
+            --generate-notes `
+            --latest
+          if ($LASTEXITCODE) { throw 'Could not publish the release.' }
