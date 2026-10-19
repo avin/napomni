@@ -3,7 +3,10 @@ use gpui::assets::IconName;
 use gpui::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputEvent, InputState},
+    input::{
+        Input, InputEvent, InputGroup, InputGroupAddon, InputGroupAddonAlignment, InputGroupButton,
+        InputState,
+    },
     spinner::Spinner,
     switch::Switch,
 };
@@ -104,6 +107,14 @@ impl MainWindow {
                 .placeholder("ID модели")
                 .default_value(connection.model)
         });
+        for input in [&base_url, &api_key, &model] {
+            cx.subscribe(input, |this, _, event, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.save_connection(cx);
+                }
+            })
+            .detach();
+        }
         let history_scroll = ScrollHandle::new();
         history_scroll.scroll_to_bottom();
         Self {
@@ -224,7 +235,7 @@ impl MainWindow {
             .and_then(|s| s.save_connection(connection))
         {
             Ok(()) => {
-                self.status = "Настройки подключения сохранены".into();
+                self.status.clear();
                 cx.notify();
                 true
             }
@@ -485,39 +496,33 @@ impl MainWindow {
                                     .text_color(t.muted_foreground)
                                     .child("Ключ хранится локально открытым текстом."),
                             )
-                            .child(field("Модель", Input::new(&self.model).disabled(self.busy)))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_wrap()
-                                    .gap_2()
-                                    .child(
-                                        Button::new("catalog")
-                                            .icon(IconName::List)
-                                            .label("Каталог моделей")
-                                            .disabled(self.busy)
-                                            .on_click(cx.listener(|v, _, window, cx| {
-                                                v.open_catalog(window, cx)
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("save")
-                                            .icon(IconName::Save)
-                                            .label("Сохранить")
-                                            .disabled(self.busy)
-                                            .on_click(cx.listener(|v, _, _, cx| {
-                                                v.save_connection(cx);
-                                            })),
-                                    )
-                                    .child(
-                                        Button::new("probe")
-                                            .icon(IconName::Plug)
-                                            .label("Проверить")
-                                            .loading(self.busy)
-                                            .on_click(cx.listener(|v, _, window, cx| {
-                                                v.request(true, window, cx)
-                                            })),
+                            .child(field(
+                                "Модель",
+                                InputGroup::new("model-input")
+                                    .input(Input::new(&self.model))
+                                    .disabled(self.busy)
+                                    .addon(
+                                        InputGroupAddon::new("model-picker")
+                                            .align(InputGroupAddonAlignment::InlineEnd)
+                                            .child(
+                                                InputGroupButton::new("catalog")
+                                                    .label("Выбрать…")
+                                                    .on_click(cx.listener(|v, _, window, cx| {
+                                                        v.open_catalog(window, cx)
+                                                    })),
+                                            ),
                                     ),
+                            ))
+                            .child(
+                                div().flex().flex_wrap().gap_2().child(
+                                    Button::new("probe")
+                                        .icon(IconName::Plug)
+                                        .label("Проверить")
+                                        .loading(self.busy)
+                                        .on_click(cx.listener(|v, _, window, cx| {
+                                            v.request(true, window, cx)
+                                        })),
+                                ),
                             ),
                     )
                     .child(

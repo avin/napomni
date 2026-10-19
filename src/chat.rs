@@ -87,6 +87,7 @@ impl ChatSession {
         &mut self,
         pending: Option<crate::commands::CommandRecovery>,
     ) -> Result<()> {
+        self.remember_current_key();
         let mut value = serde_json::to_value(pending)?;
         for key in self.redaction_keys.iter().filter(|key| !key.is_empty()) {
             redact_chat_value(&mut value, key, None);
@@ -109,11 +110,13 @@ impl ChatSession {
             serde_json::to_vec_pretty(&connection)?,
         )
         .context("Не удалось сохранить подключение")?;
-        if !self.redaction_keys.contains(&connection.api_key) {
-            self.redaction_keys.push(connection.api_key.clone());
-        }
         self.connection = connection;
         Ok(())
+    }
+    fn remember_current_key(&mut self) {
+        if !self.redaction_keys.contains(&self.connection.api_key) {
+            self.redaction_keys.push(self.connection.api_key.clone());
+        }
     }
     fn save_messages(&mut self, messages: Vec<Message>) -> Result<()> {
         fs::write(
@@ -152,6 +155,7 @@ impl ChatSession {
         text: &str,
         append: bool,
     ) -> Result<()> {
+        self.remember_current_key();
         let mut messages = self.messages.clone();
         let content = self.redact(text);
         if let Some(message) =
@@ -181,6 +185,7 @@ impl ChatSession {
             })
     }
     fn record(&mut self, role: &str, text: &str) -> Result<()> {
+        self.remember_current_key();
         let mut messages = self.messages.clone();
         let content = self.redact(text);
         messages.push(Message {
@@ -389,5 +394,34 @@ impl Provider {
             .content
             .filter(|s| !s.trim().is_empty())
             .ok_or(ConnectionError::Response)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ChatSession, Connection};
+
+    #[test]
+    fn autosaved_key_edits_do_not_redact_partial_keys_from_history() {
+        let folder = tempfile::tempdir().unwrap();
+        let mut chat = ChatSession::open(folder.path()).unwrap();
+        for key in ["s", "se", "secret-key"] {
+            chat.save_connection(Connection {
+                api_key: key.into(),
+                ..Connection::default()
+            })
+            .unwrap();
+        }
+        chat.record_user("send secret-key").unwrap();
+        assert_eq!(chat.messages()[0].content, "send [ключ скрыт]");
+
+        chat.save_connection(Connection {
+            api_key: "replacement-key".into(),
+            ..Connection::default()
+        })
+        .unwrap();
+        chat.record_assistant("send secret-key replacement-key")
+            .unwrap();
+        assert_eq!(chat.messages()[1].content, "send [ключ скрыт] [ключ скрыт]");
     }
 }
