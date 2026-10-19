@@ -57,20 +57,23 @@ jobs:
       - name: Build application
         run: cargo build --release --locked --target x86_64-pc-windows-msvc
 
-      - name: Package application
+      - name: Build Windows installer
         run: |
-          New-Item -ItemType Directory -Path dist | Out-Null
-          Copy-Item -LiteralPath 'target/x86_64-pc-windows-msvc/release/napomni.exe' -Destination dist
-          Copy-Item -LiteralPath README.md -Destination dist
-          Compress-Archive -LiteralPath 'dist/napomni.exe', 'dist/README.md' -DestinationPath "dist/napomni-$env:GITHUB_REF_NAME-windows-x64.zip"
+          $compiler = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6/ISCC.exe'
+          if (!(Test-Path -LiteralPath $compiler)) { throw 'Inno Setup 6 compiler was not found.' }
+          $version = $env:GITHUB_REF_NAME.Substring(1)
+          & $compiler "/DAppVersion=$version" 'installer/napomni.iss'
+          if ($LASTEXITCODE) { throw 'Could not build the installer.' }
+          if (!(Test-Path -LiteralPath "dist/Napomni-$version-windows-x64-setup.exe")) {
+            throw 'The installer was not produced.'
+          }
 
       - name: Create and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create $env:GITHUB_REF_NAME `
-            'dist/napomni.exe' `
-            "dist/napomni-$env:GITHUB_REF_NAME-windows-x64.zip" `
+            "dist/Napomni-$($env:GITHUB_REF_NAME.Substring(1))-windows-x64-setup.exe" `
             --repo $env:GITHUB_REPOSITORY `
             --verify-tag `
             --title "Napomni $env:GITHUB_REF_NAME" `
