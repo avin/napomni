@@ -1,5 +1,69 @@
 use win_notifi_toast::chat::{ChatSession, Connection};
 #[test]
+fn action_progress_and_final_reply_share_one_persisted_message() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut chat = ChatSession::open(folder.path()).unwrap();
+    let command = uuid::Uuid::new_v4();
+    chat.record_user("Создай напоминание").unwrap();
+    chat.record_action(command, "Сохранено #1: Вода").unwrap();
+    assert_eq!(chat.messages().len(), 2);
+    assert_eq!(chat.messages()[1].result_for, Some(command));
+    // A failed/empty concluding response must leave the committed result visible.
+    chat.finish_reply(command, "").unwrap();
+    assert_eq!(chat.messages()[1].content, "Сохранено #1: Вода");
+    let mut chat = ChatSession::open(folder.path()).unwrap();
+    chat.finish_reply(command, "Напоминание о воде создано. Что-нибудь ещё?")
+        .unwrap();
+    assert_eq!(chat.messages().len(), 2);
+    assert_eq!(
+        chat.messages()[1].content,
+        "Напоминание о воде создано. Что-нибудь ещё?"
+    );
+    assert_eq!(chat.messages()[1].result_for, Some(command));
+    let follow_up = uuid::Uuid::new_v4();
+    chat.record_user("Измени время").unwrap();
+    chat.finish_reply(follow_up, "На какое время?").unwrap();
+    assert_eq!(chat.messages().last().unwrap().result_for, None);
+    assert_eq!(chat.messages().len(), 4);
+}
+
+#[test]
+fn grouped_actions_preserve_results_and_redact_secrets() {
+    let folder = tempfile::tempdir().unwrap();
+    let mut chat = ChatSession::open(folder.path()).unwrap();
+    chat.save_connection(Connection {
+        api_key: "secret-key".into(),
+        ..Connection::default()
+    })
+    .unwrap();
+    let command = uuid::Uuid::new_v4();
+    chat.record_action(command, "Создано #1 secret-key")
+        .unwrap();
+    chat.record_action(command, "Удалено #2").unwrap();
+    assert_eq!(chat.messages().len(), 1);
+    assert_eq!(
+        chat.messages()[0].content,
+        "Создано #1 [ключ скрыт]\nУдалено #2"
+    );
+    chat.finish_reply(command, "Изменено secret-key").unwrap();
+    let reopened = ChatSession::open(folder.path()).unwrap();
+    assert_eq!(reopened.messages()[0].content, "Изменено [ключ скрыт]");
+    assert_eq!(reopened.messages()[0].result_for, Some(command));
+}
+
+#[test]
+fn old_history_without_result_metadata_still_opens() {
+    let folder = tempfile::tempdir().unwrap();
+    std::fs::write(
+        folder.path().join("chat.json"),
+        r#"[{"role":"assistant","content":"Привет"}]"#,
+    )
+    .unwrap();
+    let chat = ChatSession::open(folder.path()).unwrap();
+    assert_eq!(chat.messages()[0].result_for, None);
+}
+
+#[test]
 fn settings_and_conversation_survive_restart_and_clear() {
     let folder = tempfile::tempdir().unwrap();
     let mut chat = ChatSession::open(folder.path()).unwrap();
@@ -100,6 +164,7 @@ fn ordinary_reply_does_not_force_tools() {
                 win_notifi_toast::chat::Message {
                     role: "user".into(),
                     content: "Привет".into(),
+                    result_for: None,
                 },
             ]))
             .unwrap();

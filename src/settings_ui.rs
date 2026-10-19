@@ -1,10 +1,9 @@
 use gpui::assets::IconName;
 use gpui::{
     component::{
-        ActiveTheme, WindowExt,
+        ActiveTheme, Selectable, WindowExt,
         button::{Button, ButtonVariants},
         radio::Radio,
-        switch::Switch,
     },
     prelude::*,
     *,
@@ -33,14 +32,11 @@ pub fn open(window: &mut Window, cx: &mut App) {
         failed: false,
     });
     window.open_dialog(cx, move |dialog, window, _| {
-        dialog
-            .title("Размещение и автозапуск")
-            .width(px(520.))
-            .child(
-                div()
-                    .h((window.viewport_size().height - px(180.)).min(px(400.)))
-                    .child(settings.clone()),
-            )
+        dialog.title("Размещение тостов").width(px(520.)).child(
+            div()
+                .h((window.viewport_size().height - px(180.)).min(px(300.)))
+                .child(settings.clone()),
+        )
     });
 }
 
@@ -149,6 +145,8 @@ impl Render for SettingsView {
                         .flex_1()
                         .label(corner.label())
                         .toggled(settings.corner == corner)
+                        .selected(settings.corner == corner)
+                        .when(settings.corner == corner, |button| button.primary())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             let mut next = cx.global::<DesktopSettings>().0.settings().clone();
                             next.corner = corner;
@@ -191,34 +189,6 @@ impl Render for SettingsView {
                             .gap_3()
                             .child(div().font_weight(FontWeight::SEMIBOLD).child("Угол экрана"))
                             .child(div().rounded_lg().bg(muted).p_3().child(corner_rows)),
-                    )
-                    .child(
-                        div()
-                            .p_3()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(border)
-                            .flex()
-                            .items_center()
-                            .gap_4()
-                            .child(div().flex_1().child("Автозапуск при входе в Windows"))
-                            .child(
-                                Switch::new("autostart")
-                                    .accessibility_label("Запуск вместе с Windows")
-                                    .checked(settings.autostart)
-                                    .on_click(cx.listener(|this, checked, _, cx| {
-                                        let mut next =
-                                            cx.global::<DesktopSettings>().0.settings().clone();
-                                        next.autostart = *checked;
-                                        this.save(next, cx);
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(muted_text)
-                            .child("Размещение изменится для новых тостов."),
                     ),
             )
             .child(

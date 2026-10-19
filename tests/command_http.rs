@@ -91,6 +91,7 @@ fn recovery_hydrates_committed_receipt_after_crash_before_transcript_was_saved()
     let history = vec![Message {
         role: "user".into(),
         content: context.source.clone(),
+        result_for: None,
     }];
     let initial_pending = prepare_command(&history, context.clone()).unwrap();
     execute_tool_once(
@@ -151,6 +152,7 @@ fn clarification_preserves_selected_id_and_follow_up_changes_only_the_named_prop
     let mut history = vec![Message {
         role: "user".into(),
         content: selected.source.clone(),
+        result_for: None,
     }];
     let (provider, first_server) = server(vec![completion(
         json!({"role":"assistant","content":"Какой цвет?"}),
@@ -169,10 +171,12 @@ fn clarification_preserves_selected_id_and_follow_up_changes_only_the_named_prop
     history.push(Message {
         role: "assistant".into(),
         content: clarification.text,
+        result_for: None,
     });
     history.push(Message {
         role: "user".into(),
         content: "Зелёный".into(),
+        result_for: None,
     });
     let (provider, second_server) = server(vec![
         completion(
@@ -286,6 +290,7 @@ fn failed_final_response_resumes_with_saved_tool_result_instead_of_executing_aga
     let history = vec![Message {
         role: "user".into(),
         content: context.source.clone(),
+        result_for: None,
     }];
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let outcome = runtime.block_on(run_command(&provider, &history, context, app.clone()));

@@ -100,6 +100,7 @@ fn weekly_command_reaches_provider_saves_returns_description_and_fires_offline()
     let history = vec![Message {
         role: "user".into(),
         content: context.source.clone(),
+        result_for: None,
     }];
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()

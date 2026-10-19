@@ -4,6 +4,8 @@ use gpui::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState},
+    spinner::Spinner,
+    switch::Switch,
 };
 use gpui::{
     Context, Div, Entity, Focusable, FontWeight, IntoElement, ScrollHandle, Window, div,
@@ -16,6 +18,8 @@ use win_notifi_toast::{
     reminder_tools::{CommandOutcome, prepare_command, resume_command_with_progress},
     reminders::{CommandContext, ReminderId},
 };
+
+const PANEL_HEADER_HEIGHT: f32 = 52.;
 
 enum ChatEvent {
     Fact(String),
@@ -161,15 +165,16 @@ impl MainWindow {
         self.status = match result {
             Ok(fact) => {
                 if let Some(session) = self.session.as_mut()
-                    && let Err(error) = session.record_assistant(&fact)
+                    && let Err(error) = session.record_action(uuid::Uuid::new_v4(), &fact)
                 {
                     format!("{fact}. Не удалось сохранить историю: {error}")
                 } else {
-                    fact
+                    String::new()
                 }
             }
             Err(error) => error.to_string(),
         };
+        self.history_scroll.scroll_to_bottom();
         cx.notify();
     }
     fn open_catalog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -313,11 +318,12 @@ impl MainWindow {
         }
         let connection = self.session.as_ref().unwrap().connection().clone();
         let must_probe = self.verified_connection.as_ref() != Some(&connection);
+        let command_id = recovery.as_ref().map(|r| r.context.id);
         self.busy = true;
         self.status = if probe {
             "Проверяем подключение и инструменты…"
         } else {
-            "Ожидаем ответ…"
+            ""
         }
         .into();
         cx.notify();
@@ -362,7 +368,7 @@ impl MainWindow {
                     Ok(ChatEvent::Fact(fact)) => {
                         let _ = view.update(cx, |view, cx| {
                             if let Some(session) = view.session.as_mut()
-                                && let Err(error) = session.record_assistant(&fact)
+                                && let Err(error) = session.record_action(command_id.unwrap(), &fact)
                             {
                                 view.status = error.to_string();
                             }
@@ -390,7 +396,7 @@ impl MainWindow {
                                     } else if let Some(session) = view.session.as_mut()
                                         && !text.is_empty()
                                     {
-                                        view.status = match session.record_assistant(&text) {
+                                        view.status = match session.finish_reply(command_id.unwrap(), &text) {
                                             Ok(()) => String::new(),
                                             Err(e) => e.to_string(),
                                         };
@@ -533,16 +539,49 @@ impl MainWindow {
                                     .child(
                                         Button::new("placement")
                                             .icon(IconName::Settings2)
-                                            .label("Размещение и автозапуск")
+                                            .label("Размещение тостов")
                                             .on_click(|_, w, cx| crate::settings_ui::open(w, cx)),
                                     )
                                     .child(
                                         Button::new("demo")
                                             .icon(IconName::FlaskConical)
-                                            .ghost()
                                             .label("Тест тостов")
                                             .on_click(|_, _, cx| schedule_demo(cx)),
                                     ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .p_4()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(t.border)
+                            .bg(t.background)
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .child(div().flex_1().child("Автозапуск при входе в Windows"))
+                            .child(
+                                Switch::new("autostart")
+                                    .accessibility_label("Автозапуск при входе в Windows")
+                                    .checked(
+                                        cx.global::<crate::settings_ui::DesktopSettings>()
+                                            .0
+                                            .settings()
+                                            .autostart,
+                                    )
+                                    .on_click(cx.listener(|this, checked, _, cx| {
+                                        let service = &mut cx
+                                            .global_mut::<crate::settings_ui::DesktopSettings>()
+                                            .0;
+                                        let mut next = service.settings().clone();
+                                        next.autostart = *checked;
+                                        this.status = match service.save(next) {
+                                            Ok(()) => String::new(),
+                                            Err(error) => error.to_string(),
+                                        };
+                                        cx.notify();
+                                    })),
                             ),
                     ),
             )
@@ -745,7 +784,8 @@ impl MainWindow {
                 .child(
                     div()
                         .px_3()
-                        .py_2()
+                        .h(px(PANEL_HEADER_HEIGHT))
+                        .flex_shrink_0()
                         .flex()
                         .items_center()
                         .justify_between()
@@ -784,6 +824,7 @@ impl MainWindow {
             .gap_3();
         for (index, m) in messages.into_iter().enumerate() {
             let user = m.role == "user";
+            let action = m.result_for.is_some();
             history = history.child(
                 div()
                     .id(("message", index))
@@ -797,12 +838,65 @@ impl MainWindow {
                         div()
                             .p_3()
                             .rounded_lg()
-                            .bg(if user { t.secondary } else { t.background })
+                            .bg(if action {
+                                t.success.opacity(0.08)
+                            } else if user {
+                                t.secondary
+                            } else {
+                                t.background
+                            })
                             .border_1()
-                            .border_color(if user { t.secondary } else { t.border })
+                            .border_color(if action {
+                                t.success.opacity(0.5)
+                            } else if user {
+                                t.secondary
+                            } else {
+                                t.border
+                            })
                             .text_sm()
+                            .when(action, |e| {
+                                e.child(
+                                    div()
+                                        .flex()
+                                        .items_center()
+                                        .gap_2()
+                                        .mb_2()
+                                        .text_color(t.success)
+                                        .font_weight(FontWeight::MEDIUM)
+                                        .child(Icon::new(IconName::CircleCheck).small())
+                                        .child("Выполнено"),
+                                )
+                            })
                             .child(m.content),
                     ),
+            );
+        }
+        if self.busy {
+            history = history.child(
+                div()
+                    .id("assistant-pending")
+                    .mr_6()
+                    .flex_shrink_0()
+                    .p_3()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_sm()
+                    .text_color(t.muted_foreground)
+                    .child(Spinner::new().small())
+                    .child("Ассистент готовит ответ…"),
+            );
+        }
+        if !self.status.is_empty() {
+            history = history.child(
+                div()
+                    .id("chat-status")
+                    .flex_shrink_0()
+                    .p_3()
+                    .rounded_lg()
+                    .bg(t.secondary)
+                    .text_sm()
+                    .child(self.status.clone()),
             );
         }
         let configured = self
@@ -822,7 +916,9 @@ impl MainWindow {
                 .bg(t.background)
                 .child(
                     div()
-                        .p_3()
+                        .px_3()
+                        .h(px(PANEL_HEADER_HEIGHT))
+                        .flex_shrink_0()
                         .border_b_1()
                         .border_color(t.border)
                         .flex()
@@ -920,7 +1016,7 @@ impl MainWindow {
                                         })),
                                 ),
                         )
-                        .when(self.pending.is_some(), |e| {
+                        .when(self.pending.is_some() && !self.busy, |e| {
                             e.child(
                                 Button::new("retry")
                                     .icon(IconName::RefreshCw)
@@ -992,19 +1088,22 @@ impl Render for MainWindow {
                 Page::Reminders => self.workspace(cx).into_any_element(),
                 Page::Settings => self.connection_settings(cx).into_any_element(),
             })
-            .when(!self.status.is_empty(), |e| {
-                e.child(
-                    div()
-                        .id("status")
-                        .max_h(px(72.))
-                        .overflow_y_scroll()
-                        .px_3()
-                        .py_2()
-                        .bg(t.secondary)
-                        .text_sm()
-                        .child(self.status.clone()),
-                )
-            })
+            .when(
+                self.page == Page::Settings && !self.status.is_empty(),
+                |e| {
+                    e.child(
+                        div()
+                            .id("status")
+                            .max_h(px(72.))
+                            .overflow_y_scroll()
+                            .px_3()
+                            .py_2()
+                            .bg(t.secondary)
+                            .text_sm()
+                            .child(self.status.clone()),
+                    )
+                },
+            )
     }
 }
 

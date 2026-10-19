@@ -90,6 +90,7 @@ fn pending_typed_command_survives_restart_without_api_key_in_chat_artifacts() {
     let history = vec![Message {
         role: "user".into(),
         content: "Запрос secret-key".into(),
+        result_for: None,
     }];
     let mut recovery = prepare_command(&history, context).unwrap();
     recovery.messages.push(

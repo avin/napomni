@@ -35,6 +35,8 @@ impl Default for Connection {
 pub struct Message {
     pub role: String,
     pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result_for: Option<uuid::Uuid>,
 }
 
 pub struct ChatSession {
@@ -128,18 +130,63 @@ impl ChatSession {
     pub fn record_assistant(&mut self, text: &str) -> Result<()> {
         self.record("assistant", text)
     }
-    fn record(&mut self, role: &str, text: &str) -> Result<()> {
+    /// Show committed operations immediately in one result card per command.
+    pub fn record_action(&mut self, command_id: uuid::Uuid, text: &str) -> Result<()> {
+        self.save_reply(Some(command_id), text, true)
+    }
+    /// The concluding reply replaces the progress card instead of duplicating it.
+    pub fn finish_reply(&mut self, command_id: uuid::Uuid, text: &str) -> Result<()> {
+        if text.trim().is_empty() {
+            return Ok(());
+        }
+        let result_for = self
+            .messages
+            .iter()
+            .any(|m| m.result_for == Some(command_id))
+            .then_some(command_id);
+        self.save_reply(result_for, text, false)
+    }
+    fn save_reply(
+        &mut self,
+        result_for: Option<uuid::Uuid>,
+        text: &str,
+        append: bool,
+    ) -> Result<()> {
         let mut messages = self.messages.clone();
-        let content = self
-            .redaction_keys
+        let content = self.redact(text);
+        if let Some(message) =
+            result_for.and_then(|id| messages.iter_mut().find(|m| m.result_for == Some(id)))
+        {
+            if append {
+                message.content.push('\n');
+                message.content.push_str(&content);
+            } else {
+                message.content = content;
+            }
+        } else {
+            messages.push(Message {
+                role: "assistant".into(),
+                content,
+                result_for,
+            });
+        }
+        self.save_messages(messages)
+    }
+    fn redact(&self, text: &str) -> String {
+        self.redaction_keys
             .iter()
             .filter(|key| !key.is_empty())
             .fold(text.to_owned(), |text, key| {
                 text.replace(key, "[ключ скрыт]")
-            });
+            })
+    }
+    fn record(&mut self, role: &str, text: &str) -> Result<()> {
+        let mut messages = self.messages.clone();
+        let content = self.redact(text);
         messages.push(Message {
             role: role.into(),
             content,
+            result_for: None,
         });
         self.save_messages(messages)
     }

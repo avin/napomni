@@ -194,6 +194,7 @@ fn selected_catalog_id_is_used_in_subsequent_chat_request() {
         .block_on(provider.reply(&[win_notifi_toast::chat::Message {
             role: "user".into(),
             content: "Привет".into(),
+            result_for: None,
         }]))
         .unwrap();
     assert_eq!(reply, "Ответ выбранной модели");

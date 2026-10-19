@@ -82,6 +82,7 @@ fn tool_creates_saved_reminder_and_returns_actual_result_to_model() {
     let history = vec![Message {
         role: "user".into(),
         content: context.source.clone(),
+        result_for: None,
     }];
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
@@ -123,6 +124,7 @@ fn ordinary_prose_and_invalid_tool_arguments_do_not_change_reminders() {
         let history = vec![Message {
             role: "user".into(),
             content: context.source.clone(),
+            result_for: None,
         }];
         let outcome = tokio::runtime::Runtime::new()
             .unwrap()
@@ -199,6 +201,7 @@ fn interval_chat_exposes_schema_and_returns_durable_grid_facts() {
     let history = vec![Message {
         role: "user".into(),
         content: context.source.clone(),
+        result_for: None,
     }];
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
@@ -244,6 +247,7 @@ fn calendar_date_chat_tools_publish_actual_monthly_and_yearly_rules() {
     let history = vec![Message {
         role: "user".into(),
         content: context.source.clone(),
+        result_for: None,
     }];
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
@@ -319,6 +323,7 @@ fn constrained_chat_supports_workday_window_exclusion_and_limits_only_clear() {
     let history = vec![Message {
         role: "user".into(),
         content: context.source.clone(),
+        result_for: None,
     }];
     let outcome = tokio::runtime::Runtime::new()
         .unwrap()
