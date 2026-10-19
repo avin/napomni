@@ -721,15 +721,14 @@ impl MainWindow {
                     .flex_shrink_0()
                     .p_3()
                     .rounded_lg()
-                    .border_1()
-                    .border_color(if selected { t.primary } else { t.border })
-                    .bg(t.background)
+                    .border_2()
+                    .border_color(rgb(r.border))
+                    .bg(if selected { t.muted } else { t.background })
                     .child(
                         div()
                             .flex()
                             .gap_3()
                             .items_start()
-                            .child(div().w(px(4.)).h(px(36.)).rounded_full().bg(rgb(r.border)))
                             .child(
                                 div()
                                     .flex_1()

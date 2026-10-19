@@ -15,6 +15,8 @@ use win_notifi_toast::{
 use crate::{native, settings_ui::DesktopSettings};
 
 const TRANSITION: Duration = Duration::from_millis(220);
+const BORDER_PULSE: Duration = Duration::from_millis(1200);
+const BORDER_WIDTH: f32 = 4.;
 const GAP: f32 = 12.;
 const FONT_SIZE: f32 = 16.;
 const LINE_HEIGHT: f32 = 24.;
@@ -245,6 +247,7 @@ struct ToastStack {
     scroll: f32,
     total_height: f32,
     hover_until: Instant,
+    pulse_since: Instant,
     regions: Vec<Rect>,
     drag: Option<Drag>,
 }
@@ -281,6 +284,7 @@ impl ToastStack {
             scroll: 0.,
             total_height: 0.,
             hover_until: now,
+            pulse_since: now,
             regions: vec![],
             drag: None,
         }
@@ -518,6 +522,8 @@ impl Render for ToastStack {
         let surface = cx.theme().background;
         let text = cx.theme().foreground;
         let muted = cx.theme().muted_foreground;
+        let pulse = now.duration_since(self.pulse_since).as_secs_f32() / BORDER_PULSE.as_secs_f32();
+        let border_opacity = 0.25 + 0.75 * (1. + (pulse * std::f32::consts::TAU).cos()) / 2.;
         let width = self.placement.viewport.width as f32 / self.placement.scale;
         let viewport_height = self.placement.viewport.height as f32 / self.placement.scale;
         for card in &mut self.cards {
@@ -699,8 +705,8 @@ impl Render for ToastStack {
                 .child(
                     div()
                         .absolute()
-                        .top(px(16.))
-                        .left(px(BODY_INSET))
+                        .top(px(16. - BORDER_WIDTH))
+                        .left(px(BODY_INSET - BORDER_WIDTH))
                         .text_color(accent)
                         .child(Icon::new(IconName::Bell).with_size(px(18.))),
                 )
@@ -708,8 +714,8 @@ impl Render for ToastStack {
                     e.child(
                         div()
                             .absolute()
-                            .top(px(16.))
-                            .left(px(44.))
+                            .top(px(16. - BORDER_WIDTH))
+                            .left(px(44. - BORDER_WIDTH))
                             .text_size(px(12.))
                             .text_color(muted)
                             .child("Со звуком"),
@@ -718,13 +724,17 @@ impl Render for ToastStack {
                 .child(
                     div()
                         .absolute()
-                        .top(px(BODY_TOP))
-                        .left(px(BODY_INSET))
+                        .top(px(BODY_TOP - BORDER_WIDTH))
+                        .left(px(BODY_INSET - BORDER_WIDTH))
                         .w(px((width - BODY_INSET * 2.).max(1.)))
                         .child(card.snapshot.text.clone()),
                 )
                 .child(
-                    div().absolute().right(px(14.)).top(px(close_top)).child(
+                    div()
+                        .absolute()
+                        .right(px(14. - BORDER_WIDTH))
+                        .top(px(close_top - BORDER_WIDTH))
+                        .child(
                         Button::new(("close-toast", id))
                             .icon(IconName::Close)
                             .accessibility_label("Закрыть напоминание")
@@ -747,14 +757,10 @@ impl Render for ToastStack {
                 .h(px(frame.height))
                 .opacity(frame.opacity.clamp(0., 1.))
                 .overflow_hidden()
-                .bg(surface)
-                .rounded(px(16.))
-                .border_1()
-                .border_color(if selected {
-                    accent
-                } else {
-                    accent.opacity(0.42)
-                })
+                .bg(if selected { cx.theme().muted } else { surface })
+                .rounded(px(4.))
+                .border(px(BORDER_WIDTH))
+                .border_color(accent.opacity(border_opacity))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event: &MouseDownEvent, _, cx| {
@@ -780,18 +786,7 @@ impl Render for ToastStack {
                     }),
                 );
             if frame.content > 0.01 {
-                element = element
-                    .child(
-                        div()
-                            .absolute()
-                            .left_0()
-                            .top(px(16.))
-                            .bottom(px(16.))
-                            .w(px(3.))
-                            .rounded_full()
-                            .bg(accent),
-                    )
-                    .child(content);
+                element = element.child(content);
             }
             root = root.child(element);
         }
@@ -806,12 +801,7 @@ impl Render for ToastStack {
                 .detach();
             }
         }
-        if self
-            .cards
-            .iter()
-            .any(|card| card.entering || now.duration_since(card.since) < TRANSITION)
-            || self.drag.is_some()
-        {
+        if !self.cards.is_empty() {
             window.request_animation_frame();
         }
         root
