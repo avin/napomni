@@ -17,12 +17,12 @@ use windows::Win32::{
     },
 };
 
-pub use win_notifi_toast::placement::WorkArea;
+pub use napomni::placement::WorkArea;
 
 pub struct WindowsDesktop;
 
-impl win_notifi_toast::placement::DesktopPlatform for WindowsDesktop {
-    fn monitors(&self) -> Result<Vec<win_notifi_toast::placement::Monitor>> {
+impl napomni::placement::DesktopPlatform for WindowsDesktop {
+    fn monitors(&self) -> Result<Vec<napomni::placement::Monitor>> {
         use windows::Win32::{
             Foundation::{LPARAM, RECT},
             Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR, MONITORINFOEXW},
@@ -33,8 +33,7 @@ impl win_notifi_toast::placement::DesktopPlatform for WindowsDesktop {
             _: *mut RECT,
             data: LPARAM,
         ) -> windows::core::BOOL {
-            let result =
-                unsafe { &mut *(data.0 as *mut Vec<win_notifi_toast::placement::Monitor>) };
+            let result = unsafe { &mut *(data.0 as *mut Vec<napomni::placement::Monitor>) };
             let mut info = MONITORINFOEXW::default();
             info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
             if unsafe { GetMonitorInfoW(monitor, &mut info as *mut _ as *mut MONITORINFO) }
@@ -48,7 +47,7 @@ impl win_notifi_toast::placement::DesktopPlatform for WindowsDesktop {
                         .iter()
                         .position(|c| *c == 0)
                         .unwrap_or(info.szDevice.len());
-                    result.push(win_notifi_toast::placement::Monitor {
+                    result.push(napomni::placement::Monitor {
                         id: String::from_utf16_lossy(&info.szDevice[..end]),
                         primary: info.monitorInfo.dwFlags & 1 != 0,
                         area: WorkArea {
@@ -106,9 +105,9 @@ impl win_notifi_toast::placement::DesktopPlatform for WindowsDesktop {
                     .chain(Some(0))
                     .flat_map(u16::to_le_bytes)
                     .collect();
-                RegSetValueExW(key, w!("WinNotifiToast"), None, REG_SZ, Some(&bytes))
+                RegSetValueExW(key, w!("napomni"), None, REG_SZ, Some(&bytes))
             } else {
-                let result = RegDeleteValueW(key, w!("WinNotifiToast"));
+                let result = RegDeleteValueW(key, w!("napomni"));
                 if result == ERROR_FILE_NOT_FOUND {
                     windows::Win32::Foundation::ERROR_SUCCESS
                 } else {
@@ -275,7 +274,7 @@ pub fn place_toast(
 pub fn toast_region(
     window: &Window,
     cx: &gpui::App,
-    rectangles: Vec<win_notifi_toast::placement::Rect>,
+    rectangles: Vec<napomni::placement::Rect>,
 ) -> Result<gpui::Task<Result<()>>> {
     use windows::Win32::Graphics::Gdi::{
         CombineRgn, CreateRectRgn, DeleteObject, HGDIOBJ, RGN_OR, SetWindowRgn,
@@ -339,7 +338,7 @@ pub fn cursor_position() -> Option<(i32, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use win_notifi_toast::placement::DesktopPlatform;
+    use napomni::placement::DesktopPlatform;
     use windows::{
         Win32::{Foundation::ERROR_FILE_NOT_FOUND, System::Registry::*},
         core::w,
@@ -356,15 +355,9 @@ mod tests {
             fn drop(&mut self) {
                 unsafe {
                     if let Some((kind, bytes)) = &self.previous {
-                        let _ = RegSetValueExW(
-                            self.key,
-                            w!("WinNotifiToast"),
-                            None,
-                            *kind,
-                            Some(bytes),
-                        );
+                        let _ = RegSetValueExW(self.key, w!("napomni"), None, *kind, Some(bytes));
                     } else {
-                        let _ = RegDeleteValueW(self.key, w!("WinNotifiToast"));
+                        let _ = RegDeleteValueW(self.key, w!("napomni"));
                     }
                     let _ = RegCloseKey(self.key);
                 }
@@ -376,7 +369,7 @@ mod tests {
             let result = unsafe {
                 RegQueryValueExW(
                     key,
-                    w!("WinNotifiToast"),
+                    w!("napomni"),
                     None,
                     Some(&mut kind),
                     None,
@@ -391,7 +384,7 @@ mod tests {
             unsafe {
                 RegQueryValueExW(
                     key,
-                    w!("WinNotifiToast"),
+                    w!("napomni"),
                     None,
                     Some(&mut kind),
                     Some(bytes.as_mut_ptr()),

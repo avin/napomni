@@ -35,7 +35,7 @@ jobs:
           $version = $tag.Substring(1)
           $patterns = @{
             'Cargo.toml' = '(?m)(^version = ")[^"]+("\r?$)'
-            'Cargo.lock' = '(?m)(^name = "win-notifi-toast"\r?\nversion = ")[^"]+("\r?$)'
+            'Cargo.lock' = '(?m)(^name = "napomni"\r?\nversion = ")[^"]+("\r?$)'
           }
           foreach ($path in $patterns.Keys) {
             $content = Get-Content -LiteralPath $path -Raw
@@ -60,20 +60,20 @@ jobs:
       - name: Package application
         run: |
           New-Item -ItemType Directory -Path dist | Out-Null
-          Copy-Item -LiteralPath 'target/x86_64-pc-windows-msvc/release/win-notifi-toast.exe' -Destination dist
+          Copy-Item -LiteralPath 'target/x86_64-pc-windows-msvc/release/napomni.exe' -Destination dist
           Copy-Item -LiteralPath README.md -Destination dist
-          Compress-Archive -LiteralPath 'dist/win-notifi-toast.exe', 'dist/README.md' -DestinationPath "dist/win-notifi-toast-$env:GITHUB_REF_NAME-windows-x64.zip"
+          Compress-Archive -LiteralPath 'dist/napomni.exe', 'dist/README.md' -DestinationPath "dist/napomni-$env:GITHUB_REF_NAME-windows-x64.zip"
 
       - name: Create and publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create $env:GITHUB_REF_NAME `
-            'dist/win-notifi-toast.exe' `
-            "dist/win-notifi-toast-$env:GITHUB_REF_NAME-windows-x64.zip" `
+            'dist/napomni.exe' `
+            "dist/napomni-$env:GITHUB_REF_NAME-windows-x64.zip" `
             --repo $env:GITHUB_REPOSITORY `
             --verify-tag `
-            --title "Напоминания Windows $env:GITHUB_REF_NAME" `
+            --title "Napomni $env:GITHUB_REF_NAME" `
             --generate-notes `
             --latest
           if ($LASTEXITCODE) { throw 'Could not publish the release.' }

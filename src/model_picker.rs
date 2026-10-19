@@ -10,11 +10,11 @@ use gpui::{
     prelude::*,
     *,
 };
-use std::{sync::mpsc, time::Duration};
-use win_notifi_toast::{
+use napomni::{
     catalog::{Catalog, ToolSupport},
     chat::Connection,
 };
+use std::{sync::mpsc, time::Duration};
 
 pub fn open(connection: Connection, parent: Entity<MainWindow>, window: &mut Window, cx: &mut App) {
     let picker = cx.new(|cx| ModelPicker::new(connection, parent, window, cx));

@@ -1,14 +1,14 @@
+use napomni::{
+    chat::{Connection, Message, Provider},
+    reminder_tools::{run_command, run_command_with_progress},
+    reminders::{Application, CommandContext, JsonStore, SystemClock},
+};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::TcpListener,
     sync::{Arc, Mutex},
     thread,
-};
-use win_notifi_toast::{
-    chat::{Connection, Message, Provider},
-    reminder_tools::{run_command, run_command_with_progress},
-    reminders::{Application, CommandContext, JsonStore, SystemClock},
 };
 fn completion(message: Value) -> Value {
     json!({"id":"fixture","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"message":message,"finish_reason":"stop"}]})
@@ -292,7 +292,7 @@ fn calendar_date_chat_tools_publish_actual_monthly_and_yearly_rules() {
 #[test]
 fn constrained_chat_supports_workday_window_exclusion_and_limits_only_clear() {
     use chrono::Days;
-    use win_notifi_toast::reminders::Clock;
+    use napomni::reminders::Clock;
     let clock = Arc::new(SystemClock);
     let today = clock.local_at(clock.sample().utc).date();
     let end = today.checked_add_days(Days::new(30)).unwrap();

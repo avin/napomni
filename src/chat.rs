@@ -51,7 +51,7 @@ impl ChatSession {
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("win-notifi-toast")
+            .join("napomni")
     }
     pub fn open(directory: impl AsRef<Path>) -> Result<Self> {
         let directory = directory.as_ref().to_path_buf();

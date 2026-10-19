@@ -1,8 +1,8 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use std::sync::{Arc, Mutex};
-use win_notifi_toast::reminders::{
+use napomni::reminders::{
     Application, Clock, CommandContext, CreateReminder, JsonStore, ScheduleInput, TimeSample,
 };
+use std::sync::{Arc, Mutex};
 
 struct TestClock(Mutex<TimeSample>, Mutex<i64>);
 impl TestClock {
@@ -233,7 +233,7 @@ fn sleep_and_restart_consume_missed_one_shots_without_opening_toasts() {
 
 #[test]
 fn invalid_input_and_storage_failure_leave_saved_and_visible_data_unchanged() {
-    use win_notifi_toast::reminders::{Persisted, ReminderStore};
+    use napomni::reminders::{Persisted, ReminderStore};
     struct FailingStore;
     impl ReminderStore for FailingStore {
         fn load(&self) -> anyhow::Result<Persisted> {

@@ -1,4 +1,4 @@
-# Разработка «Напоминаний Windows»
+# Разработка Napomni
 
 Пользовательские инструкции находятся в [README.md](README.md). Здесь описаны устройство проекта, запуск из исходников, отладка, проверки и сборка.
 
@@ -34,10 +34,10 @@ cargo run --locked -- --open --test-toasts
 
 ```powershell
 cargo build --release --locked
-.\target\release\win-notifi-toast.exe
+.\target\release\napomni.exe
 ```
 
-При стандартном каталоге Cargo результат находится в `target/release/win-notifi-toast.exe`, отладочная сборка — в `target/debug/win-notifi-toast.exe`.
+При стандартном каталоге Cargo результат находится в `target/release/napomni.exe`, отладочная сборка — в `target/debug/napomni.exe`.
 
 Для автозапуска используется путь текущего исполняемого файла. Включайте его из постоянной копии приложения: запуск через Cargo привяжет автозапуск к артефакту сборки.
 
@@ -54,7 +54,7 @@ git push origin v0.1.0
 
 GitHub запускает тесты и собирает приложение на Windows для `x86_64-pc-windows-msvc`. Версия в `Cargo.toml` и запись приложения в `Cargo.lock` получают номер из тега только на время сборки; коммит в репозитории не меняется.
 
-После успешной сборки workflow публикует GitHub Release с автоматически составленным списком изменений и помечает его как Latest. К релизу прикладываются `win-notifi-toast.exe` и ZIP с этим файлом и пользовательской инструкцией `README.md`. Установщик не создаётся. Для публикации используется встроенный `GITHUB_TOKEN`; дополнительные секреты не нужны.
+После успешной сборки workflow публикует GitHub Release с автоматически составленным списком изменений и помечает его как Latest. К релизу прикладываются `napomni.exe` и ZIP с этим файлом и пользовательской инструкцией `README.md`. Установщик не создаётся. Для публикации используется встроенный `GITHUB_TOKEN`; дополнительные секреты не нужны.
 
 ## Устройство проекта
 
@@ -100,17 +100,17 @@ GitHub запускает тесты и собирает приложение н
 
 | Файл | Содержимое |
 | --- | --- |
-| `win-notifi-toast/connection.json` | Адрес провайдера, API-ключ и модель |
-| `win-notifi-toast/chat.json` | История чата и результаты операций |
-| `win-notifi-toast/reminders.json` | Напоминания, последнее отменяемое изменение и квитанции инструментов |
-| `win-notifi-toast/pending-command.json` | Контекст незавершённого ответа для продолжения |
-| `WinNotifiToast/placement.json` | Монитор, угол экрана и настройка автозапуска |
+| `napomni/connection.json` | Адрес провайдера, API-ключ и модель |
+| `napomni/chat.json` | История чата и результаты операций |
+| `napomni/reminders.json` | Напоминания, последнее отменяемое изменение и квитанции инструментов |
+| `napomni/pending-command.json` | Контекст незавершённого ответа для продолжения |
+| `napomni/placement.json` | Монитор, угол экрана и настройка автозапуска |
 
 При записи напоминаний и контекста продолжения сначала создаётся файл `.pending`, затем он заменяет основной файл. Открытые тосты существуют только в памяти.
 
 API-ключ хранится в `connection.json` открытым текстом. Сохранение истории и контекста продолжения маскирует известные ключи. При передаче диагностических данных проверяйте файлы на секреты и личную переписку.
 
-Автозапуск записывает значение `WinNotifiToast` в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Подмена `APPDATA` изолирует файлы, но не этот ключ реестра.
+Автозапуск записывает значение `napomni` в `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`. Подмена `APPDATA` изолирует файлы, но не этот ключ реестра.
 
 ## Отладка
 
@@ -119,11 +119,11 @@ API-ключ хранится в `connection.json` открытым тексто
 ```powershell
 cargo build --locked
 $savedAppData = $env:APPDATA
-$debugAppData = Join-Path ([System.IO.Path]::GetTempPath()) ('win-notifi-toast-debug-' + [guid]::NewGuid())
+$debugAppData = Join-Path ([System.IO.Path]::GetTempPath()) ('napomni-debug-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $debugAppData | Out-Null
 try {
     $env:APPDATA = $debugAppData
-    Start-Process -FilePath '.\target\debug\win-notifi-toast.exe' -ArgumentList '--open', '--test-toasts' -Wait -WindowStyle Hidden
+    Start-Process -FilePath '.\target\debug\napomni.exe' -ArgumentList '--open', '--test-toasts' -Wait -WindowStyle Hidden
 }
 finally {
     $env:APPDATA = $savedAppData
@@ -138,7 +138,7 @@ finally {
 cargo --config 'profile.dev.debug=2' build --locked
 ```
 
-Откройте `target/debug/win-notifi-toast.exe` в отладчике с поддержкой Rust/MSVC либо подключитесь к процессу. Для разбора паники задайте `$env:RUST_BACKTRACE = '1'` перед запуском. Приложение собрано как Windows GUI и не открывает консоль; ошибки части нативных операций пишутся в stderr, постоянного файлового журнала нет. Ошибки подключения и команд также выводятся в интерфейсе. На наличие видимого вывода в терминале полагаться не следует.
+Откройте `target/debug/napomni.exe` в отладчике с поддержкой Rust/MSVC либо подключитесь к процессу. Для разбора паники задайте `$env:RUST_BACKTRACE = '1'` перед запуском. Приложение собрано как Windows GUI и не открывает консоль; ошибки части нативных операций пишутся в stderr, постоянного файлового журнала нет. Ошибки подключения и команд также выводятся в интерфейсе. На наличие видимого вывода в терминале полагаться не следует.
 
 Начальные точки для поиска: `Application::tick` при проблемах со временем, `execute_tool_once` при повторных изменениях, `reminder_ui::poll` при рассогласовании ядра, карточек и звука.
 
@@ -162,7 +162,7 @@ cargo test --locked --test constraints
 
 ```powershell
 cargo test --locked --test sound_windows -- --ignored
-cargo test --locked --bin win-notifi-toast windows_autostart_roundtrip -- --ignored
+cargo test --locked --bin napomni windows_autostart_roundtrip -- --ignored
 ```
 
 Первая проверка включает встроенный сигнал примерно на 4,2 секунды. Вторая временно меняет пользовательский ключ автозапуска и восстанавливает прежнее значение.

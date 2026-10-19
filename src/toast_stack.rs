@@ -7,7 +7,7 @@ use gpui::component::{
     button::{Button, ButtonVariants},
 };
 use gpui::{prelude::*, *};
-use win_notifi_toast::{
+use napomni::{
     placement::{Corner, Placement, Rect},
     reminders::{ReminderId, ToastSnapshot},
 };
@@ -709,18 +709,18 @@ impl Render for ToastStack {
                         .right(px(14. - BORDER_WIDTH))
                         .top(px(close_top - BORDER_WIDTH))
                         .child(
-                        Button::new(("close-toast", id))
-                            .icon(IconName::Close)
-                            .accessibility_label("Закрыть напоминание")
-                            .ghost()
-                            .with_size(px(28.))
-                            .tab_stop(false)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                if !departing {
-                                    this.dismiss(id, cx);
-                                }
-                            })),
-                    ),
+                            Button::new(("close-toast", id))
+                                .icon(IconName::Close)
+                                .accessibility_label("Закрыть напоминание")
+                                .ghost()
+                                .with_size(px(28.))
+                                .tab_stop(false)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if !departing {
+                                        this.dismiss(id, cx);
+                                    }
+                                })),
+                        ),
                 );
             let mut element = div()
                 .id(("toast", card.snapshot.sequence))

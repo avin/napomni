@@ -1,11 +1,11 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
-use std::sync::{Arc, Mutex};
-use win_notifi_toast::{
+use napomni::{
     constraints::Constraints,
     reminders::{
         Application, Clock, CommandContext, CreateReminder, JsonStore, ScheduleInput, TimeSample,
     },
 };
+use std::sync::{Arc, Mutex};
 struct TestClock(Mutex<TimeSample>);
 impl TestClock {
     fn new(at: &str) -> Self {
@@ -97,7 +97,7 @@ fn date_bounds_are_inclusive_and_end_does_not_close_the_existing_toast() {
 }
 #[test]
 fn half_hour_weekday_window_exclusion_and_restart_preserve_the_original_phase() {
-    use win_notifi_toast::constraints::TimeWindow;
+    use napomni::constraints::TimeWindow;
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("data.json");
     let clock = Arc::new(TestClock::new("2026-10-29T08:30:00Z"));
@@ -194,7 +194,7 @@ fn half_hour_weekday_window_exclusion_and_restart_preserve_the_original_phase() 
 }
 #[test]
 fn limits_filter_weekly_monthly_and_yearly_without_changing_their_calendar_phase() {
-    use win_notifi_toast::{calendar_dates::YearlyDate, constraints::TimeWindow};
+    use napomni::{calendar_dates::YearlyDate, constraints::TimeWindow};
     let cases = [
         (
             ScheduleInput::Weekly {
@@ -271,7 +271,7 @@ fn limits_filter_weekly_monthly_and_yearly_without_changing_their_calendar_phase
 }
 #[test]
 fn broader_interval_combinations_work_and_impossible_or_unsupported_rules_are_errors() {
-    use win_notifi_toast::constraints::TimeWindow;
+    use napomni::constraints::TimeWindow;
     let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(TestClock::new("2026-10-16T07:00:00Z"));
     let mut app = Application::open(
@@ -401,7 +401,7 @@ fn broader_interval_combinations_work_and_impossible_or_unsupported_rules_are_er
 }
 #[test]
 fn changing_only_limits_preserves_base_grid_and_other_properties_and_is_undoable() {
-    use win_notifi_toast::{constraints::TimeWindow, mutations::ReminderPatch};
+    use napomni::{constraints::TimeWindow, mutations::ReminderPatch};
     let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(TestClock::new("2026-10-19T08:00:00Z"));
     let mut app = Application::open(

@@ -1,5 +1,5 @@
+use napomni::placement::*;
 use std::{cell::Cell, path::PathBuf};
-use win_notifi_toast::placement::*;
 struct Platform(Cell<bool>);
 impl DesktopPlatform for Platform {
     fn monitors(&self) -> anyhow::Result<Vec<Monitor>> {

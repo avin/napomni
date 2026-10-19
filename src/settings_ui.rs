@@ -8,7 +8,7 @@ use gpui::{
     prelude::*,
     *,
 };
-use win_notifi_toast::placement::{Corner, Settings, SettingsService};
+use napomni::placement::{Corner, Settings, SettingsService};
 
 use crate::native::WindowsDesktop;
 
@@ -20,7 +20,7 @@ pub fn initialize(cx: &mut App) -> anyhow::Result<()> {
         .map(std::path::PathBuf::from)
         .ok_or_else(|| anyhow::anyhow!("Не задан каталог APPDATA"))?;
     cx.set_global(DesktopSettings(SettingsService::open(
-        directory.join("WinNotifiToast").join("placement.json"),
+        directory.join("napomni").join("placement.json"),
         WindowsDesktop,
     )?));
     Ok(())

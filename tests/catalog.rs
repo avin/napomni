@@ -1,12 +1,12 @@
+use napomni::{
+    catalog::{Catalog, ToolSupport},
+    chat::{ChatSession, Connection},
+};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::TcpListener,
     thread,
-};
-use win_notifi_toast::{
-    catalog::{Catalog, ToolSupport},
-    chat::{ChatSession, Connection},
 };
 fn fixture(status: &str, body: Value) -> (Connection, thread::JoinHandle<()>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -189,9 +189,9 @@ fn selected_catalog_id_is_used_in_subsequent_chat_request() {
     .unwrap();
     catalog.select("vendor/chosen", &mut chat).unwrap();
     let reopened = ChatSession::open(directory.path()).unwrap();
-    let provider = win_notifi_toast::chat::Provider::new(reopened.connection()).unwrap();
+    let provider = napomni::chat::Provider::new(reopened.connection()).unwrap();
     let reply = runtime()
-        .block_on(provider.reply(&[win_notifi_toast::chat::Message {
+        .block_on(provider.reply(&[napomni::chat::Message {
             role: "user".into(),
             content: "Привет".into(),
             result_for: None,

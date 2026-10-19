@@ -36,7 +36,7 @@ fn tray() -> Result<TrayIcon> {
         &MenuItem::with_id("quit", "Выход", true, None),
     ])?;
     Ok(TrayIconBuilder::new()
-        .with_tooltip("Напоминания")
+        .with_tooltip("Napomni")
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(false)
         .with_icon(Icon::from_resource(1, Some((32, 32)))?)
@@ -104,7 +104,7 @@ fn main() {
                             cx,
                         ))),
                         titlebar: Some(TitlebarOptions {
-                            title: Some("Напоминания".into()),
+                            title: Some("Napomni".into()),
                             ..Default::default()
                         }),
                         window_min_size: Some(size(px(960.), px(640.))),

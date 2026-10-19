@@ -1,8 +1,8 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use std::sync::{Arc, Mutex};
-use win_notifi_toast::reminders::{
+use napomni::reminders::{
     Application, Clock, CommandContext, CreateReminder, JsonStore, ScheduleInput, TimeSample,
 };
+use std::sync::{Arc, Mutex};
 struct CalendarClock {
     now: Mutex<TimeSample>,
     offset: Mutex<i64>,
@@ -99,7 +99,7 @@ fn monthly_31_skips_short_months_and_continues_through_year_boundary() {
 }
 #[test]
 fn yearly_february_29_occurs_only_in_leap_years_and_invalid_dates_are_rejected() {
-    use win_notifi_toast::calendar_dates::YearlyDate;
+    use napomni::calendar_dates::YearlyDate;
     let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(CalendarClock::new("2027-02-28T09:00:00Z"));
     let mut app = Application::open(
@@ -192,7 +192,7 @@ impl Clock for TransitionClock {
 }
 #[test]
 fn monthly_and_yearly_skip_dst_gaps_and_never_replay_either_fold_slot() {
-    use win_notifi_toast::calendar_dates::YearlyDate;
+    use napomni::calendar_dates::YearlyDate;
     for yearly in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("data.json");
@@ -264,7 +264,7 @@ fn monthly_and_yearly_skip_dst_gaps_and_never_replay_either_fold_slot() {
 }
 #[test]
 fn calendar_rules_persist_skip_offline_dates_and_keep_multiple_local_slots_after_timezone_change() {
-    use win_notifi_toast::calendar_dates::YearlyDate;
+    use napomni::calendar_dates::YearlyDate;
     for yearly in [false, true] {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("data.json");
@@ -324,7 +324,7 @@ fn calendar_rules_persist_skip_offline_dates_and_keep_multiple_local_slots_after
 }
 #[test]
 fn invalid_calendar_sets_do_not_create_a_reminder() {
-    use win_notifi_toast::calendar_dates::YearlyDate;
+    use napomni::calendar_dates::YearlyDate;
     let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(CalendarClock::new("2027-01-01T00:00:00Z"));
     let mut app = Application::open(

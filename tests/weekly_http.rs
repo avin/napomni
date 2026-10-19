@@ -1,15 +1,15 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
+use napomni::{
+    chat::{Connection, Message, Provider},
+    reminder_tools::run_command,
+    reminders::{Application, Clock, CommandContext, JsonStore, TimeSample},
+};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::TcpListener,
     sync::{Arc, Mutex},
     thread,
-};
-use win_notifi_toast::{
-    chat::{Connection, Message, Provider},
-    reminder_tools::run_command,
-    reminders::{Application, Clock, CommandContext, JsonStore, TimeSample},
 };
 fn completion(message: Value) -> Value {
     json!({"id":"fixture","object":"chat.completion","created":1,"model":"fixture","choices":[{"index":0,"message":message,"finish_reason":"stop"}]})

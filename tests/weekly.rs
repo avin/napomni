@@ -1,8 +1,8 @@
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-use std::sync::{Arc, Mutex};
-use win_notifi_toast::reminders::{
+use napomni::reminders::{
     Application, Clock, CommandContext, CreateReminder, JsonStore, TimeSample,
 };
+use std::sync::{Arc, Mutex};
 
 struct TestClock(Mutex<TimeSample>);
 impl TestClock {

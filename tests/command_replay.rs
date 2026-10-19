@@ -1,9 +1,9 @@
-use serde_json::json;
-use std::sync::Arc;
-use win_notifi_toast::{
+use napomni::{
     commands::execute_tool_once,
     reminders::{Application, CommandContext, JsonStore, SystemClock},
 };
+use serde_json::json;
+use std::sync::Arc;
 #[test]
 fn replay_uses_durable_receipt_while_distinct_identical_commands_remain_allowed() {
     let directory = tempfile::tempdir().unwrap();
@@ -69,7 +69,7 @@ fn replay_uses_durable_receipt_while_distinct_identical_commands_remain_allowed(
 
 #[test]
 fn pending_typed_command_survives_restart_without_api_key_in_chat_artifacts() {
-    use win_notifi_toast::{
+    use napomni::{
         chat::{ChatSession, Connection, Message},
         reminder_tools::prepare_command,
     };
@@ -140,8 +140,8 @@ fn pending_typed_command_survives_restart_without_api_key_in_chat_artifacts() {
 
 #[test]
 fn data_and_receipt_commit_atomically_and_failed_save_can_be_retried_once() {
+    use napomni::reminders::{Persisted, ReminderStore};
     use std::sync::Mutex;
-    use win_notifi_toast::reminders::{Persisted, ReminderStore};
     struct Store(Arc<Mutex<(Persisted, bool)>>);
     impl ReminderStore for Store {
         fn load(&self) -> anyhow::Result<Persisted> {

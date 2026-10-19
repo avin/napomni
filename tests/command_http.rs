@@ -1,14 +1,14 @@
+use napomni::{
+    chat::{Connection, Message, Provider},
+    reminder_tools::{resume_command, run_command},
+    reminders::{Application, CommandContext, JsonStore, SystemClock},
+};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::TcpListener,
     sync::{Arc, Mutex},
     thread,
-};
-use win_notifi_toast::{
-    chat::{Connection, Message, Provider},
-    reminder_tools::{resume_command, run_command},
-    reminders::{Application, CommandContext, JsonStore, SystemClock},
 };
 fn completion(message: Value) -> Value {
     json!({"id":"test","object":"chat.completion","created":1,"model":"test","choices":[{"index":0,"message":message,"finish_reason":"stop"}]})
@@ -82,7 +82,7 @@ fn server_gated(
 
 #[test]
 fn recovery_hydrates_committed_receipt_after_crash_before_transcript_was_saved() {
-    use win_notifi_toast::{commands::execute_tool_once, reminder_tools::prepare_command};
+    use napomni::{commands::execute_tool_once, reminder_tools::prepare_command};
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("data.json");
     let clock = Arc::new(SystemClock);
@@ -125,7 +125,7 @@ fn recovery_hydrates_committed_receipt_after_crash_before_transcript_was_saved()
 
 #[test]
 fn clarification_preserves_selected_id_and_follow_up_changes_only_the_named_property() {
-    use win_notifi_toast::reminders::{CreateReminder, ScheduleInput};
+    use napomni::reminders::{CreateReminder, ScheduleInput};
     let dir = tempfile::tempdir().unwrap();
     let clock = Arc::new(SystemClock);
     let mut core = Application::open(
@@ -198,7 +198,7 @@ fn clarification_preserves_selected_id_and_follow_up_changes_only_the_named_prop
 #[test]
 fn waiting_for_failed_api_response_does_not_hold_core_or_stop_offline_schedule() {
     use chrono::{DateTime, Duration, NaiveDateTime, Utc};
-    use win_notifi_toast::reminders::{Clock, CreateReminder, ScheduleInput, TimeSample};
+    use napomni::reminders::{Clock, CreateReminder, ScheduleInput, TimeSample};
     struct TestClock(Mutex<TimeSample>);
     impl Clock for TestClock {
         fn sample(&self) -> TimeSample {

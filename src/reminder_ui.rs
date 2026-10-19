@@ -1,10 +1,10 @@
 use gpui::{App, Global};
-use std::sync::{Arc, Mutex};
-use win_notifi_toast::{
+use napomni::{
     chat::ChatSession,
     reminders::{Application, JsonStore, Reminder, ReminderId, SystemClock, ToastSnapshot},
     sound::NativeSignal,
 };
+use std::sync::{Arc, Mutex};
 
 pub struct Reminders {
     pub app: Arc<Mutex<Application>>,

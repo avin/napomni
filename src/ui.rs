@@ -15,13 +15,13 @@ use gpui::{
     Context, Div, Entity, Focusable, FontWeight, IntoElement, ScrollHandle, Window, div,
     prelude::*, px, rgb,
 };
-use std::{sync::mpsc, time::Duration};
-use win_notifi_toast::chat::{ChatSession, Connection, Provider};
-use win_notifi_toast::{
+use napomni::chat::{ChatSession, Connection, Provider};
+use napomni::{
     commands::CommandRecovery,
     reminder_tools::{CommandOutcome, prepare_command, resume_command_with_progress},
     reminders::{CommandContext, ReminderId},
 };
+use std::{sync::mpsc, time::Duration};
 
 const PANEL_HEADER_HEIGHT: f32 = 52.;
 
@@ -250,7 +250,7 @@ impl MainWindow {
     }
     pub(crate) fn select_catalog_model(
         &mut self,
-        catalog: &win_notifi_toast::catalog::Catalog,
+        catalog: &napomni::catalog::Catalog,
         id: &str,
         source: &Connection,
         window: &mut Window,
@@ -758,36 +758,30 @@ impl MainWindow {
                     .border_color(rgb(r.border))
                     .bg(if selected { t.muted } else { t.background })
                     .child(
-                        div()
-                            .flex()
-                            .gap_3()
-                            .items_start()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        div()
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(r.text.clone()),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .gap_2()
-                                            .items_start()
-                                            .text_sm()
-                                            .line_height(px(18.))
-                                            .text_color(t.muted_foreground)
-                                            .child(TextLineIcon(Icon::new(IconName::Clock).small()))
-                                            .child(
-                                                div().flex_1().min_w_0().child(description.clone()),
-                                            ),
-                                    ),
-                            ),
+                        div().flex().gap_3().items_start().child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(r.text.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .flex()
+                                        .gap_2()
+                                        .items_start()
+                                        .text_sm()
+                                        .line_height(px(18.))
+                                        .text_color(t.muted_foreground)
+                                        .child(TextLineIcon(Icon::new(IconName::Clock).small()))
+                                        .child(div().flex_1().min_w_0().child(description.clone())),
+                                ),
+                        ),
                     )
                     .child(
                         div()

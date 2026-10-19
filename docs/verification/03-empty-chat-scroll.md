@@ -22,6 +22,6 @@
 
 `cargo test --locked --lib` и `cargo clippy --locked --all-targets -- -D warnings`
 прошли. Полный `cargo test --locked` остановился при попытке заменить занятый
-`target/debug/win-notifi-toast.exe`. `cargo fmt --check` обнаружил существовавшие
+`target/debug/napomni.exe`. `cargo fmt --check` обнаружил существовавшие
 замечания в оформлении списка напоминаний и кнопки закрытия тоста;
 их код в этом исправлении не менялся.

@@ -1,4 +1,4 @@
-use win_notifi_toast::chat::{ChatSession, Connection};
+use napomni::chat::{ChatSession, Connection};
 #[test]
 fn action_progress_and_final_reply_share_one_persisted_message() {
     let folder = tempfile::tempdir().unwrap();
@@ -86,13 +86,13 @@ fn settings_and_conversation_survive_restart_and_clear() {
     );
 }
 
+use napomni::chat::{ConnectionError, Provider};
 use serde_json::{Value, json};
 use std::{
     io::{Read, Write},
     net::TcpListener,
     thread,
 };
-use win_notifi_toast::chat::{ConnectionError, Provider};
 fn serve_once(status: &str, body: Value) -> (Connection, thread::JoinHandle<Value>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -158,16 +158,17 @@ fn ordinary_reply_does_not_force_tools() {
         "200 OK",
         completion(json!({"role":"assistant","content":"Здравствуйте!"})),
     );
-    let reply =
-        runtime()
-            .block_on(Provider::new(&connection).unwrap().reply(&[
-                win_notifi_toast::chat::Message {
+    let reply = runtime()
+        .block_on(
+            Provider::new(&connection)
+                .unwrap()
+                .reply(&[napomni::chat::Message {
                     role: "user".into(),
                     content: "Привет".into(),
                     result_for: None,
-                },
-            ]))
-            .unwrap();
+                }]),
+        )
+        .unwrap();
     assert_eq!(reply, "Здравствуйте!");
     assert_eq!(server.join().unwrap()["tool_choice"], "auto");
 }
