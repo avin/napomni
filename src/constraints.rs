@@ -208,10 +208,10 @@ impl Constraints {
 
 pub(crate) fn schema() -> serde_json::Value {
     serde_json::json!({"type":"object","properties":{
-  "start_date":{"type":"string","description":"Начальная местная дата YYYY-MM-DD включительно"},
-  "end_date":{"type":"string","description":"Конечная местная дата YYYY-MM-DD включительно"},
-  "window":{"type":"object","properties":{"start":{"type":"string","description":"Начало местного окна HH:MM:SS включительно"},"end":{"type":"string","description":"Конец местного окна HH:MM:SS включительно; не раньше начала"}},"required":["start","end"],"additionalProperties":false},
-  "weekdays":{"type":"array","items":{"type":"integer","minimum":1,"maximum":7},"minItems":1,"description":"Будни: 1–5, понедельник–пятница; без календаря праздников"},
-  "excluded_dates":{"type":"array","items":{"type":"string"},"description":"Исключённые местные даты YYYY-MM-DD, без переноса и сдвига сетки"}
- },"additionalProperties":false,"description":"Местные ограничения повторения. Границы включительны. Пустой объект снимает ограничения без изменения основной сетки."})
+  "start_date":{"type":"string","description":"Inclusive start date in local time, YYYY-MM-DD"},
+  "end_date":{"type":"string","description":"Inclusive end date in local time, YYYY-MM-DD"},
+  "window":{"type":"object","properties":{"start":{"type":"string","description":"Inclusive local time window start, HH:MM:SS"},"end":{"type":"string","description":"Inclusive local time window end, HH:MM:SS; must not precede the start"}},"required":["start","end"],"additionalProperties":false},
+  "weekdays":{"type":"array","items":{"type":"integer","minimum":1,"maximum":7},"minItems":1,"description":"Working days: 1-5, Monday-Friday; no holiday calendar"},
+  "excluded_dates":{"type":"array","items":{"type":"string"},"description":"Excluded local dates, YYYY-MM-DD; no rescheduling or interval phase shifts"}
+ },"additionalProperties":false,"description":"Local recurrence constraints. Bounds are inclusive. An empty object removes constraints without changing the base recurrence phase."})
 }

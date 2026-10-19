@@ -353,8 +353,8 @@ impl Provider {
             .ok_or(ConnectionError::Response)
     }
     pub async fn probe(&self) -> std::result::Result<(), ConnectionError> {
-        let messages = serde_json::from_value(json!([{"role":"user","content":"Вызови connection_probe с аргументом ok=true. Это безопасная проверка подключения."}])).unwrap();
-        let tool = serde_json::from_value(json!({"type":"function","function":{"name":"connection_probe","description":"Безопасная проверка инструментов, не изменяет данные.","parameters":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}}})).unwrap();
+        let messages = serde_json::from_value(json!([{"role":"user","content":"Call connection_probe with ok=true. This is a harmless connection check."}])).unwrap();
+        let tool = serde_json::from_value(json!({"type":"function","function":{"name":"connection_probe","description":"Harmless tool check; does not modify data.","parameters":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"],"additionalProperties":false}}})).unwrap();
         let response = self.complete(messages, vec![tool], true).await?;
         let valid = response.tool_calls.unwrap_or_default().iter().any(|t| {
             t.function.name == "connection_probe"
@@ -369,7 +369,7 @@ impl Provider {
     }
     pub async fn reply(&self, history: &[Message]) -> std::result::Result<String, ConnectionError> {
         let mut messages = vec![
-            json!({"role":"system","content":"Отвечай по-русски. Не утверждай, что напоминание создано или изменено: инструменты напоминаний пока не подключены. Помогай уточнять запрос."}),
+            json!({"role":"system","content":"Reply in the language of the latest user message, unless the user explicitly requests another language. Reminder tools are not connected yet: do not claim that a reminder has been created or changed. Help clarify the request."}),
         ];
         messages.extend(
             history
@@ -377,7 +377,7 @@ impl Provider {
                 .map(|m| json!({"role":m.role,"content":m.content})),
         );
         // Probe tool is harmless and lets providers accept tools even before reminder tools are installed.
-        let tools = vec![serde_json::from_value(json!({"type":"function","function":{"name":"connection_probe","description":"Проверка подключения без изменения данных","parameters":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}}})).unwrap()];
+        let tools = vec![serde_json::from_value(json!({"type":"function","function":{"name":"connection_probe","description":"Connection check without modifying data","parameters":{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}}})).unwrap()];
         let response = self
             .complete(
                 serde_json::from_value(json!(messages)).unwrap(),
