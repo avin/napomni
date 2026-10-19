@@ -5,6 +5,7 @@ use gpui::{
         ActiveTheme, Icon, WindowExt,
         button::Button,
         input::{Input, InputState},
+        scroll::{Scrollbar, ScrollbarMode},
     },
     prelude::*,
     *,
@@ -35,6 +36,7 @@ struct ModelPicker {
     parent: Entity<MainWindow>,
     catalog: Catalog,
     search: Entity<InputState>,
+    scroll: UniformListScrollHandle,
     status: String,
     loading: bool,
     failed: bool,
@@ -94,6 +96,7 @@ impl ModelPicker {
             parent,
             catalog: Catalog::default(),
             search,
+            scroll: UniformListScrollHandle::new(),
             status: String::new(),
             loading: true,
             failed: false,
@@ -139,6 +142,7 @@ impl Render for ModelPicker {
             .text_color(foreground)
             .child(
                 div()
+                    .flex_shrink_0()
                     .p_3()
                     .border_b_1()
                     .border_color(border)
@@ -165,9 +169,9 @@ impl Render for ModelPicker {
                 div()
                     .flex_1()
                     .min_h_0()
-                    .px_3()
+                    .py_3()
                     .when(count == 0, |view| {
-                        view.child(
+                        view.px_3().child(
                             div()
                                 .size_full()
                                 .flex()
@@ -191,20 +195,26 @@ impl Render for ModelPicker {
                     })
                     .when(count > 0, |view| {
                         view.child(
-                            uniform_list(
-                                "catalog-results",
-                                count,
-                                cx.processor(move |_, range: std::ops::Range<usize>, _, cx| {
-                                    range
-                                        .map(|index| {
-                                            let model = results[index].clone();
-                                            let id = model.id.clone();
-                                            let supported =
-                                                model.tool_support == ToolSupport::Supported;
-                                            div().h(px(80.)).pb_1().child(
+                            div()
+                                .relative()
+                                .size_full()
+                                .child(
+                                    uniform_list(
+                                        "catalog-results",
+                                        count,
+                                        cx.processor(
+                                            move |_, range: std::ops::Range<usize>, _, cx| {
+                                                range
+                                                    .map(|index| {
+                                                        let model = results[index].clone();
+                                                        let id = model.id.clone();
+                                                        let supported = model.tool_support
+                                                            == ToolSupport::Supported;
+                                                        div().h(px(56.)).pl_3().pr_6().pb_1().child(
                                                 div()
                                                     .size_full()
-                                                    .p_2()
+                                                    .px_2()
+                                                    .py_1()
                                                     .rounded_lg()
                                                     .border_1()
                                                     .border_color(border)
@@ -217,7 +227,6 @@ impl Render for ModelPicker {
                                                             .min_w_0()
                                                             .flex()
                                                             .flex_col()
-                                                            .gap_1()
                                                             .child(
                                                                 div()
                                                                     .truncate()
@@ -250,37 +259,30 @@ impl Render for ModelPicker {
                                                             )),
                                                     ),
                                             )
-                                        })
-                                        .collect::<Vec<_>>()
-                                }),
-                            )
-                            .size_full(),
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            },
+                                        ),
+                                    )
+                                    .track_scroll(&self.scroll)
+                                    .size_full(),
+                                )
+                                .child(
+                                    Scrollbar::vertical(&self.scroll).mode(ScrollbarMode::Always),
+                                ),
                         )
                     }),
             )
-            .child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .border_t_1()
-                    .border_color(border)
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(div().flex_1().min_w_0().when(self.failed, |e| {
-                        e.child(
-                            div()
-                                .text_sm()
-                                .text_color(danger)
-                                .child(self.status.clone()),
-                        )
-                    }))
-                    .child(
-                        Button::new("close-model-picker")
-                            .icon(IconName::X)
-                            .label("Закрыть")
-                            .on_click(|_, window, cx| window.close_dialog(cx)),
-                    ),
-            )
+            .when(self.failed, |view| {
+                view.child(
+                    div()
+                        .flex_shrink_0()
+                        .px_3()
+                        .pb_2()
+                        .text_sm()
+                        .text_color(danger)
+                        .child(self.status.clone()),
+                )
+            })
     }
 }
