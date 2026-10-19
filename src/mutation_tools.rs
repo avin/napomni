@@ -35,13 +35,13 @@ struct Delete {
 fn target(id: ReminderId, context: &CommandContext) -> Result<()> {
     ensure!(
         context.selected_id.is_none_or(|selected| selected == id),
-        "Выбрана другая запись. Уточните ID напоминания"
+        "Выбрана другая запись. Уточните нужное напоминание"
     );
     Ok(())
 }
 fn result(app: &Application, reminder: Reminder, action: &str) -> Value {
     let description = reminder.schedule.description(app.clock());
-    json!({"ok":true,"reminder":reminder,"schedule_description":description,"fact":format!("{action} #{}: «{}». {}. Звук: {}; {}",reminder.id,reminder.text,description,if reminder.sound {"включён"} else {"выключен"},if reminder.paused {"приостановлено"} else {"не приостановлено"})})
+    json!({"ok":true,"reminder":reminder,"schedule_description":description,"fact":format!("{action}: «{}». {}. Звук: {}; {}",reminder.text,description,if reminder.sound {"включён"} else {"выключен"},if reminder.paused {"приостановлено"} else {"не приостановлено"})})
 }
 pub(crate) fn execute(
     app: &mut Application,
@@ -58,8 +58,9 @@ pub(crate) fn execute(
             Ok(result(app, reminder, "Изменено"))
         }
         "set_reminder_paused" => {
-            let args: Pause = serde_json::from_str(arguments)
-                .map_err(|_| anyhow::anyhow!("Укажите ID и состояние паузы"))?;
+            let args: Pause = serde_json::from_str(arguments).map_err(|_| {
+                anyhow::anyhow!("Не удалось определить напоминание и состояние паузы")
+            })?;
             target(args.id, context)?;
             let reminder = app.set_paused(args.id, args.paused)?;
             Ok(result(
@@ -74,11 +75,11 @@ pub(crate) fn execute(
         }
         "delete_reminder" => {
             let args: Delete = serde_json::from_str(arguments)
-                .map_err(|_| anyhow::anyhow!("Укажите ID для удаления"))?;
+                .map_err(|_| anyhow::anyhow!("Не удалось определить напоминание для удаления"))?;
             target(args.id, context)?;
             let reminder = app.delete(args.id)?;
             Ok(
-                json!({"ok":true,"deleted_id":reminder.id,"fact":format!("Удалено #{}: «{}»",reminder.id,reminder.text)}),
+                json!({"ok":true,"deleted_id":reminder.id,"fact":format!("Удалено: «{}»",reminder.text)}),
             )
         }
         "undo_last_operation" => {

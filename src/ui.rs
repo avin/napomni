@@ -168,15 +168,15 @@ impl MainWindow {
                 .map_err(|_| anyhow::anyhow!("Ядро напоминаний недоступно"))?;
             match action {
                 ListAction::Pause(id, paused) => {
-                    app.set_paused(id, paused)?;
+                    let reminder = app.set_paused(id, paused)?;
                     Ok(format!(
-                        "{} #{}",
+                        "{}: «{}»",
                         if paused {
                             "Приостановлено"
                         } else {
                             "Возобновлено"
                         },
-                        id
+                        reminder.text
                     ))
                 }
                 ListAction::Delete(id) => {
@@ -184,13 +184,13 @@ impl MainWindow {
                     if self.selected_id == Some(id) {
                         self.selected_id = None;
                     }
-                    Ok(format!("Удалено #{}: «{}»", id, reminder.text))
+                    Ok(format!("Удалено: «{}»", reminder.text))
                 }
                 ListAction::Undo => {
                     let restored = app.undo()?;
                     Ok(restored.map_or_else(
                         || "Отмена выполнена. Созданная запись удалена".into(),
-                        |r| format!("Отмена выполнена. Восстановлено #{}: «{}»", r.id, r.text),
+                        |r| format!("Отмена выполнена. Восстановлено: «{}»", r.text),
                     ))
                 }
             }
@@ -224,8 +224,8 @@ impl MainWindow {
                 .confirm()
                 .title("Удалить напоминание?")
                 .description(format!(
-                    "#{}: «{}»\nУдаление можно отменить кнопкой отмены последнего действия.",
-                    id, text
+                    "«{}»\nУдаление можно отменить кнопкой отмены последнего действия.",
+                    text
                 ))
                 .cancel_text("Отмена")
                 .ok_text("Удалить")
@@ -1059,7 +1059,15 @@ impl MainWindow {
                                     .justify_between()
                                     .text_sm()
                                     .text_color(t.primary)
-                                    .child(format!("Изменение № {id}"))
+                                    .child(
+                                        div().flex_1().min_w_0().child(
+                                            records
+                                                .iter()
+                                                .find(|(r, _)| r.id == id)
+                                                .map(|(r, _)| format!("Изменение: «{}»", r.text))
+                                                .unwrap_or_else(|| "Изменение напоминания".into()),
+                                        ),
+                                    )
                                     .child(
                                         Button::new("detach")
                                             .ghost()

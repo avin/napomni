@@ -45,13 +45,13 @@ impl Application {
             .reminders
             .iter()
             .position(|r| r.id == id)
-            .context("Напоминание с этим ID не найдено")?;
+            .context("Напоминание не найдено")?;
         let before = next.reminders[index].clone();
         let reminder = next
             .reminders
             .iter_mut()
             .find(|r| r.id == id)
-            .context("Напоминание с этим ID не найдено")?;
+            .context("Напоминание не найдено")?;
         if let Some(text) = patch.text {
             let text = quoted_text(&context.source).unwrap_or(text);
             ensure!(!text.trim().is_empty(), "Укажите текст напоминания");
@@ -124,7 +124,7 @@ impl Application {
             .reminders
             .iter()
             .position(|r| r.id == id)
-            .context("Напоминание с этим ID не найдено")?;
+            .context("Напоминание не найдено")?;
         let before = self.state.reminders[index].clone();
         if before.paused == paused {
             return Ok(before);
@@ -151,7 +151,7 @@ impl Application {
             .reminders
             .iter()
             .position(|r| r.id == id)
-            .context("Напоминание с этим ID не найдено")?;
+            .context("Напоминание не найдено")?;
         let mut next = self.state.clone();
         let before = next.reminders.remove(index);
         self.commit_change(
