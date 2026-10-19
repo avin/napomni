@@ -757,7 +757,11 @@ impl Render for ToastStack {
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
                             Button::new(("snooze-toast", id))
-                                .child(Icon::new(IconName::Moon).with_size(px(14.)))
+                                .child(
+                                    Icon::new(IconName::Moon)
+                                        .with_size(px(14.))
+                                        .text_color(cx.theme().muted_foreground),
+                                )
                                 .accessibility_label(format!(
                                     "Отложить на {} мин",
                                     cx.global::<DesktopSettings>().0.settings().snooze_minutes
