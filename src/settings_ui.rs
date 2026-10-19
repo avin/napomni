@@ -30,6 +30,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
     let settings = cx.new(|_| SettingsView {
         message: String::new(),
         failed: false,
+        scroll: ScrollHandle::new(),
     });
     window.open_dialog(cx, move |dialog, window, _| {
         dialog.title("Размещение тостов").width(px(520.)).child(
@@ -43,6 +44,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
 struct SettingsView {
     message: String,
     failed: bool,
+    scroll: ScrollHandle,
 }
 impl SettingsView {
     fn save(&mut self, next: Settings, cx: &mut Context<Self>) {
@@ -164,9 +166,10 @@ impl Render for SettingsView {
             .text_base()
             .bg(background)
             .text_color(foreground)
-            .child(
+            .child(crate::ui::scroll_panel(
                 div()
                     .id("settings-scroll")
+                    .track_scroll(&self.scroll)
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
@@ -190,7 +193,8 @@ impl Render for SettingsView {
                             .child(div().font_weight(FontWeight::SEMIBOLD).child("Угол экрана"))
                             .child(div().rounded_lg().bg(muted).p_3().child(corner_rows)),
                     ),
-            )
+                &self.scroll,
+            ))
             .child(
                 div()
                     .px_3()

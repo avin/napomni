@@ -7,6 +7,7 @@ use gpui::component::{
         Input, InputEvent, InputGroup, InputGroupAddon, InputGroupAddonAlignment, InputGroupButton,
         InputState,
     },
+    scroll::{Scrollbar, ScrollbarMode},
     spinner::Spinner,
     switch::Switch,
 };
@@ -75,6 +76,9 @@ pub struct MainWindow {
     page: Page,
     filter: Filter,
     history_scroll: ScrollHandle,
+    reminders_scroll: ScrollHandle,
+    settings_scroll: ScrollHandle,
+    status_scroll: ScrollHandle,
 }
 impl MainWindow {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -146,6 +150,9 @@ impl MainWindow {
             page: Page::Reminders,
             filter: Filter::Active,
             history_scroll,
+            reminders_scroll: ScrollHandle::new(),
+            settings_scroll: ScrollHandle::new(),
+            status_scroll: ScrollHandle::new(),
         }
     }
     fn apply_list_action(&mut self, action: ListAction, cx: &mut Context<Self>) {
@@ -471,10 +478,11 @@ impl MainWindow {
     }
 }
 impl MainWindow {
-    fn connection_settings(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
+    fn connection_settings(&self, cx: &mut Context<Self>) -> Div {
         let t = cx.theme().clone();
-        div()
+        let content = div()
             .id("settings-content")
+            .track_scroll(&self.settings_scroll)
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
@@ -604,7 +612,8 @@ impl MainWindow {
                                     })),
                             ),
                     ),
-            )
+            );
+        scroll_panel(content, &self.settings_scroll)
     }
 
     fn workspace(&self, cx: &mut Context<Self>) -> Div {
@@ -669,6 +678,7 @@ impl MainWindow {
         }
         let mut list = div()
             .id("reminder-list")
+            .track_scroll(&self.reminders_scroll)
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
@@ -697,6 +707,14 @@ impl MainWindow {
             let id = r.id;
             let paused = r.paused;
             let selected = self.selected_id == Some(id);
+            let description = description.replace(
+                "(местное время)",
+                if r.sound {
+                    "(со звуком)"
+                } else {
+                    "(без звука)"
+                },
+            );
             list = list.child(
                 div()
                     .id(("reminder", id as usize))
@@ -735,15 +753,7 @@ impl MainWindow {
                                             .child(
                                                 div().flex_1().min_w_0().child(description.clone()),
                                             ),
-                                    )
-                                    .when(r.sound, |e| {
-                                        e.child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(t.muted_foreground)
-                                                .child("Со звуком"),
-                                        )
-                                    }),
+                                    ),
                             ),
                     )
                     .child(
@@ -838,7 +848,7 @@ impl MainWindow {
                                 })),
                         ),
                 )
-                .child(list);
+                .child(scroll_panel(list, &self.reminders_scroll));
         let messages = self
             .session
             .as_ref()
@@ -981,7 +991,7 @@ impl MainWindow {
                                 })),
                         ),
                 )
-                .child(history)
+                .child(scroll_panel(history, &self.history_scroll))
                 .child(
                     div()
                         .p_3()
@@ -1126,18 +1136,39 @@ impl Render for MainWindow {
                 |e| {
                     e.child(
                         div()
-                            .id("status")
-                            .max_h(px(72.))
-                            .overflow_y_scroll()
-                            .px_3()
-                            .py_2()
-                            .bg(t.secondary)
-                            .text_sm()
-                            .child(self.status.clone()),
+                            .relative()
+                            .flex_shrink_0()
+                            .child(
+                                div()
+                                    .id("status")
+                                    .track_scroll(&self.status_scroll)
+                                    .max_h(px(72.))
+                                    .overflow_y_scroll()
+                                    .px_3()
+                                    .py_2()
+                                    .bg(t.secondary)
+                                    .text_sm()
+                                    .pr_6()
+                                    .child(self.status.clone()),
+                            )
+                            .child(
+                                Scrollbar::vertical(&self.status_scroll)
+                                    .mode(ScrollbarMode::Always),
+                            ),
                     )
                 },
             )
     }
+}
+
+pub(crate) fn scroll_panel(content: gpui::Stateful<Div>, scroll: &ScrollHandle) -> Div {
+    div()
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .min_w_0()
+        .child(content.size_full().pr_6())
+        .child(Scrollbar::vertical(scroll).mode(ScrollbarMode::Always))
 }
 
 fn field(label: &'static str, input: impl IntoElement) -> Div {
