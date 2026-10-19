@@ -66,7 +66,7 @@ fn monthly_31_skips_short_months_and_continues_through_year_boundary() {
     clock.set("2027-01-31T09:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     clock.set("2027-02-28T09:00:00Z");
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
@@ -128,7 +128,7 @@ fn yearly_february_29_occurs_only_in_leap_years_and_invalid_dates_are_rejected()
     clock.set("2028-02-29T09:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     assert_eq!(
         reminder
             .schedule
@@ -251,7 +251,7 @@ fn monthly_and_yearly_skip_dst_gaps_and_never_replay_either_fold_slot() {
         clock.set("2028-10-29T00:40:00Z");
         app.tick().unwrap();
         assert_eq!(app.open_toasts(), first);
-        app.close_toast(reminder.id);
+        app.close_toast(reminder.id).unwrap();
         clock.set("2028-10-29T01:05:00Z");
         let mut app = Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap();
         clock.set("2028-10-29T01:10:00Z");

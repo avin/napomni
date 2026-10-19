@@ -29,16 +29,20 @@ pub fn initialize(cx: &mut App) -> anyhow::Result<()> {
     });
     Ok(())
 }
-pub fn close(id: ReminderId, cx: &mut App) {
+pub fn close(id: ReminderId, cx: &mut App) -> bool {
     let active = if let Ok(mut app) = cx.global::<Reminders>().app.lock() {
-        app.close_toast(id);
+        if let Err(error) = app.close_toast(id) {
+            eprintln!("{error:#}");
+            return false;
+        }
         app.signal_active()
     } else {
-        false
+        return false;
     };
     if let Err(error) = cx.global_mut::<Reminders>().signal.reconcile(active) {
         eprintln!("{error:#}");
     }
+    true
 }
 pub fn shutdown(cx: &mut App) {
     if let Ok(mut app) = cx.global::<Reminders>().app.lock() {
@@ -48,7 +52,9 @@ pub fn shutdown(cx: &mut App) {
             .map(|t| t.reminder_id)
             .collect::<Vec<_>>();
         for id in ids {
-            app.close_toast(id);
+            if let Err(error) = app.close_toast(id) {
+                eprintln!("{error:#}");
+            }
         }
     }
     if let Err(error) = cx.global_mut::<Reminders>().signal.reconcile(false) {

@@ -40,6 +40,23 @@ pub fn tools() -> Vec<ChatCompletionTool> {
             "sound":{"type":"boolean","description":"Sound is enabled by default."}
         },"required":["text","schedule"],"additionalProperties":false}}}
     ])).expect("static tool definitions");
+    let variants = tools[1]
+        .function
+        .parameters
+        .as_mut()
+        .expect("create parameters")["properties"]["schedule"]["oneOf"]
+        .as_array_mut()
+        .expect("schedule variants");
+    let mut after_close = variants
+        .iter()
+        .find(|variant| variant["properties"]["kind"]["const"] == "interval")
+        .expect("interval schema")
+        .clone();
+    after_close["properties"]["kind"]["const"] = json!("interval_after_close");
+    after_close["description"] = json!(
+        "Opt-in interval counted from closing the notification. First occurrence follows seconds/start_local; while open, wait for closure. Use only when explicitly requested; ordinary intervals remain kind interval."
+    );
+    variants.push(after_close);
     let schedule = &mut tools[1]
         .function
         .parameters
@@ -52,7 +69,7 @@ pub fn tools() -> Vec<ChatCompletionTool> {
         .filter(|variant| {
             matches!(
                 variant["properties"]["kind"]["const"].as_str(),
-                Some("interval" | "weekly" | "monthly" | "yearly")
+                Some("interval" | "interval_after_close" | "weekly" | "monthly" | "yearly")
             )
         })
         .cloned()
@@ -80,7 +97,7 @@ pub fn execute_tool(
                 bail!("Инструмент списка не принимает аргументы");
             }
             Ok(
-                json!({"ok":true,"reminders":app.reminders().iter().map(|r|json!({"reminder":r,"schedule_description":r.schedule.description(app.clock())})).collect::<Vec<_>>() }),
+                json!({"ok":true,"reminders":app.reminders().iter().map(|r|json!({"reminder":r,"schedule_description":r.schedule.description(app.clock()),"schedule_status":app.schedule_status(r.id)})).collect::<Vec<_>>() }),
             )
         }
         "create_reminder" => {
@@ -124,7 +141,7 @@ pub async fn run_command_with_progress(
 }
 pub fn prepare_command(history: &[Message], context: CommandContext) -> Result<CommandRecovery> {
     let mut messages = vec![json!({"role":"system","content":format!(
-        "You are a Windows reminder assistant. Reply in the language of the latest user message, unless the user explicitly requests another language. Earlier messages, tool results, and these English instructions do not determine the reply language. Use the same language for reminder text you generate; preserve user-provided quoted text verbatim. Only tools modify data; ordinary replies do not save anything. Report the actual tool result in the reply language, preserving its facts. When the user requests a reminder and its schedule can be determined unambiguously from the request and context, call create_reminder immediately without prior confirmation. Use the supplied wording for the text or briefly express the topic; if neither topic nor text is supplied, or the user allows any text, use the localized equivalent of 'Reminder'. Use tool defaults for unspecified sound and border color. For example, for 'I need a notification in 5 minutes with sound', immediately call create_reminder with text 'Reminder', schedule kind after_seconds, seconds 300, and sound true. Ask a clarification only when the answer is necessary to determine the schedule or identify an existing reminder unambiguously. Ask only for missing essential information and retain the supplied parameters and context. Do not invent facts or essential schedule parameters. Supported schedules include one-time, interval, and weekly reminders: selected weekdays (Monday=1, Sunday=7), multiple times, and every N weeks. For N>1, obtain the starting week and pass its Monday date as anchor_monday; ask if it is missing. Do not invent the cycle phase. Pass monthly recurrences as monthly with days and times, and yearly recurrences as yearly with dates (month, day) and times. Skip days absent from a month and February 29 in non-leap years without rescheduling. Do not save an impossible specific date as a different date. Calendar times follow Windows local time; working days mean Monday-Friday. Do not approximate unsupported rules. Pass date ranges, time windows, weekdays, and recurrence exclusions as constrained with an unchanged base rule and limits. Date and time bounds are inclusive; overnight windows and nested constraints are unsupported. Do not reschedule excluded dates or change the recurrence phase. When only constraints change, pass patch.limits and preserve unspecified constraints; empty limits removes all constraints without changing the base recurrence. When editing, pass ONLY explicitly requested patch properties. Reminder IDs are internal tool identifiers: never display them to the user or ask the user for an ID, even if earlier messages contain IDs. Refer to reminders by their notification text as their name. Changes require an unambiguously identified reminder; identical text in multiple reminders does not authorize choosing arbitrarily. Use the selected ID internally when present. Otherwise read the list and clarify ambiguity using notification text and schedule, or ask the user to select a reminder in the list. Use the corresponding tools to pause, delete, or undo. Pass relative delays as after_seconds and tomorrow as tomorrow: the application computes them from command submission. Pass every-N-seconds recurrences as interval with seconds; supply start_local only for an explicitly specified start, otherwise the application anchors the interval to actual creation. Command submission UTC: {}, Windows local time: {}. Selected ID: {:?}.",
+        "You are a Windows reminder assistant. Reply in the language of the latest user message, unless the user explicitly requests another language. Earlier messages, tool results, and these English instructions do not determine the reply language. Use the same language for reminder text you generate; preserve user-provided quoted text verbatim. Only tools modify data; ordinary replies do not save anything. Report the actual tool result in the reply language, preserving its facts. When the user requests a reminder and its schedule can be determined unambiguously from the request and context, call create_reminder immediately without prior confirmation. Use the supplied wording for the text or briefly express the topic; if neither topic nor text is supplied, or the user allows any text, use the localized equivalent of 'Reminder'. Use tool defaults for unspecified sound and border color. For example, for 'I need a notification in 5 minutes with sound', immediately call create_reminder with text 'Reminder', schedule kind after_seconds, seconds 300, and sound true. Ask a clarification only when the answer is necessary to determine the schedule or identify an existing reminder unambiguously. Ask only for missing essential information and retain the supplied parameters and context. Do not invent facts or essential schedule parameters. Supported schedules include one-time, interval, and weekly reminders: selected weekdays (Monday=1, Sunday=7), multiple times, and every N weeks. For N>1, obtain the starting week and pass its Monday date as anchor_monday; ask if it is missing. Do not invent the cycle phase. Pass monthly recurrences as monthly with days and times, and yearly recurrences as yearly with dates (month, day) and times. Skip days absent from a month and February 29 in non-leap years without rescheduling. Do not save an impossible specific date as a different date. Calendar times follow Windows local time; working days mean Monday-Friday. Do not approximate unsupported rules. Pass date ranges, time windows, weekdays, and recurrence exclusions as constrained with an unchanged base rule and limits. Date and time bounds are inclusive; overnight windows and nested constraints are unsupported. Do not reschedule excluded dates or change the recurrence phase. When only constraints change, pass patch.limits and preserve unspecified constraints; empty limits removes all constraints without changing the base recurrence. When editing, pass ONLY explicitly requested patch properties. Reminder IDs are internal tool identifiers: never display them to the user or ask the user for an ID, even if earlier messages contain IDs. Refer to reminders by their notification text as their name. Changes require an unambiguously identified reminder; identical text in multiple reminders does not authorize choosing arbitrarily. Use the selected ID internally when present. Otherwise read the list and clarify ambiguity using notification text and schedule, or ask the user to select a reminder in the list. Use the corresponding tools to pause, delete, or undo. Pass relative delays as after_seconds and tomorrow as tomorrow: the application computes them from command submission. Pass every-N-seconds recurrences as interval with seconds; supply start_local only for an explicitly specified start, otherwise the application anchors the interval to actual creation. Use interval_after_close with seconds only when the user explicitly asks to count each next interval from closing the notification; otherwise use interval (fixed grid). The first notification is one interval after creation unless start_local is specified. When changing only this mode, read the existing schedule and preserve its period and constraints. Command submission UTC: {}, Windows local time: {}. Selected ID: {:?}.",
         context.submitted_utc,context.submitted_local,context.selected_id
     )})];
     messages.extend(

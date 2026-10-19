@@ -69,9 +69,9 @@ fn one_aggregate_signal_lasts_until_last_sounding_toast_closes_even_when_silent_
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 3);
     assert!(app.signal_active());
-    app.close_toast(first);
+    app.close_toast(first).unwrap();
     assert!(app.signal_active());
-    app.close_toast(second);
+    app.close_toast(second).unwrap();
     assert!(!app.signal_active());
     assert_eq!(app.open_toasts()[0].reminder_id, silent);
     app.update(
@@ -116,7 +116,7 @@ fn edits_pause_delete_and_undo_keep_current_sound_snapshot_but_future_toast_uses
     app.set_paused(id, false).unwrap();
     assert_eq!(app.open_toasts(), &[snapshot]);
     assert!(app.signal_active());
-    app.close_toast(id);
+    app.close_toast(id).unwrap();
     assert!(!app.signal_active());
     clock.advance(60);
     app.tick().unwrap();

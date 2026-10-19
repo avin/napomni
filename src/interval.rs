@@ -39,7 +39,7 @@ pub(crate) fn next_after(
         .checked_add(1)?;
     anchor.checked_add_signed(Duration::try_seconds(steps.checked_mul(seconds)?)?)
 }
-pub(crate) fn description(anchor: DateTime<Utc>, seconds: i64, clock: &dyn Clock) -> String {
+pub(crate) fn duration_description(seconds: i64) -> String {
     let (amount, unit) = if seconds % 3600 == 0 {
         (seconds / 3600, "ч")
     } else if seconds % 60 == 0 {
@@ -47,8 +47,8 @@ pub(crate) fn description(anchor: DateTime<Utc>, seconds: i64, clock: &dyn Clock
     } else {
         (seconds, "с")
     };
-    format!(
-        "Каждые {amount} {unit}, первая точка сетки {} (местное время)",
-        clock.local_at(anchor).format("%d.%m.%Y в %H:%M:%S")
-    )
+    format!("{amount} {unit}")
+}
+pub(crate) fn description(seconds: i64) -> String {
+    format!("Каждые {}", duration_description(seconds))
 }

@@ -39,8 +39,14 @@ impl Constraints {
             base: Box::new(base),
             limits: self,
         };
+        let mut probe = schedule.clone();
+        if let Some((next, _)) = probe.after_close_next_mut()
+            && next.is_none()
+        {
+            probe.restart_after_close(now)?;
+        }
         ensure!(
-            schedule.next_after(now, clock).is_some(),
+            probe.next_after(now, clock).is_some(),
             "Сочетание ограничений не даёт будущего срабатывания в поддерживаемом поиске: до 400 календарных лет и 100000 кандидатов. Уточните правило"
         );
         Ok(schedule)

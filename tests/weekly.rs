@@ -57,12 +57,12 @@ fn weekly_selected_days_and_multiple_times_open_future_toasts_after_each_close()
     clock.advance_to("2026-10-19T09:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     clock.advance_to("2026-10-19T10:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
     assert!(!app.reminders()[0].completed);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     clock.advance_to("2026-10-20T10:00:00Z");
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
@@ -91,7 +91,7 @@ fn two_week_phase_uses_mondays_across_year_and_survives_restart_without_catchup(
     clock.advance_to("2026-12-31T09:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts(), snapshot);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     clock.advance_to("2027-01-05T09:00:00Z");
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
@@ -220,7 +220,7 @@ fn autumn_fold_does_not_repeat_either_of_two_local_slots_even_after_restart() {
         clock.advance_to(instant);
         app.tick().unwrap();
         assert_eq!(app.open_toasts().len(), 1);
-        app.close_toast(reminder.id);
+        app.close_toast(reminder.id).unwrap();
     }
     drop(app);
     clock.advance_to("2026-10-25T01:00:00Z");
@@ -273,7 +273,7 @@ fn manual_clock_rollback_does_not_replay_two_consumed_local_slots_after_restart(
         clock.advance_to(instant);
         app.tick().unwrap();
         assert_eq!(app.open_toasts().len(), 1);
-        app.close_toast(reminder.id);
+        app.close_toast(reminder.id).unwrap();
     }
     clock.advance_to("2026-10-19T08:30:00Z");
     app.tick().unwrap();

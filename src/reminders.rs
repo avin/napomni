@@ -84,6 +84,10 @@ pub enum Schedule {
     Once {
         at: DateTime<Utc>,
     },
+    IntervalAfterClose {
+        next_utc: Option<DateTime<Utc>>,
+        period_seconds: i64,
+    },
     Interval {
         anchor_utc: DateTime<Utc>,
         period_seconds: i64,
@@ -112,12 +116,56 @@ impl Schedule {
                 anchor_utc,
                 period_seconds,
             } => crate::interval::next_after(*anchor_utc, *period_seconds, after),
+            Self::IntervalAfterClose {
+                next_utc,
+                period_seconds,
+            } => crate::interval::next_after((*next_utc)?, *period_seconds, after),
             Self::Constrained { base, limits } => limits.next_after(base, after, clock, cursor),
             Self::Weekly { rule } => rule.next_after(after, clock, cursor),
             Self::Monthly { rule } => rule.next_after(after, clock, cursor),
             Self::Yearly { rule } => rule.next_after(after, clock, cursor),
         };
         at.filter(|at| *at > after)
+    }
+    /// Compare recurrence settings without the runtime deadline advanced by closing a toast.
+    pub(crate) fn same_rule(&self, other: &Self) -> bool {
+        let mut left = self.clone();
+        let mut right = other.clone();
+        if let Some((next, _)) = left.after_close_next_mut() {
+            *next = None;
+        }
+        if let Some((next, _)) = right.after_close_next_mut() {
+            *next = None;
+        }
+        left == right
+    }
+    pub fn is_after_close(&self) -> bool {
+        match self {
+            Self::Constrained { base, .. } => base.is_after_close(),
+            Self::IntervalAfterClose { .. } => true,
+            _ => false,
+        }
+    }
+    pub(crate) fn after_close_next_mut(&mut self) -> Option<(&mut Option<DateTime<Utc>>, i64)> {
+        match self {
+            Self::Constrained { base, .. } => base.after_close_next_mut(),
+            Self::IntervalAfterClose {
+                next_utc,
+                period_seconds,
+            } => Some((next_utc, *period_seconds)),
+            _ => None,
+        }
+    }
+    pub(crate) fn restart_after_close(&mut self, now: DateTime<Utc>) -> Result<()> {
+        if let Some((next, seconds)) = self.after_close_next_mut() {
+            *next = Some(
+                now.checked_add_signed(
+                    Duration::try_seconds(seconds).context("Слишком большой интервал")?,
+                )
+                .context("Слишком далёкое время")?,
+            );
+        }
+        Ok(())
     }
     pub fn is_calendar_repeating(&self) -> bool {
         if let Self::Constrained { base, .. } = self {
@@ -134,10 +182,15 @@ impl Schedule {
                 return format!("{}. {}", base.description(clock), limits.description());
             }
             Self::Once { at } => clock.local_at(*at),
-            Self::Interval {
-                anchor_utc,
-                period_seconds,
-            } => return crate::interval::description(*anchor_utc, *period_seconds, clock),
+            Self::Interval { period_seconds, .. } => {
+                return crate::interval::description(*period_seconds);
+            }
+            Self::IntervalAfterClose { period_seconds, .. } => {
+                return format!(
+                    "Через {} после закрытия",
+                    crate::interval::duration_description(*period_seconds)
+                );
+            }
             Self::OnceLocal { date_time } => *date_time,
             Self::Weekly { rule } => return rule.description(),
             Self::Monthly { rule } => return rule.description(),
@@ -155,7 +208,7 @@ impl Schedule {
             Self::Weekly { .. } => false,
             Self::Monthly { .. } => false,
             Self::Yearly { .. } => false,
-            Self::Interval { .. } => false,
+            Self::Interval { .. } | Self::IntervalAfterClose { .. } => false,
             Self::OnceLocal { date_time } => clock
                 .resolve_local(*date_time)
                 .into_iter()
@@ -181,6 +234,11 @@ pub enum ScheduleInput {
     },
     AfterSeconds {
         seconds: i64,
+    },
+    IntervalAfterClose {
+        seconds: i64,
+        #[serde(default)]
+        start_local: Option<NaiveDateTime>,
     },
     Interval {
         seconds: i64,
@@ -239,6 +297,26 @@ impl ScheduleInput {
                 seconds,
                 start_local,
             } => crate::interval::resolve(seconds, start_local, clock)?,
+            Self::IntervalAfterClose {
+                seconds,
+                start_local,
+            } => {
+                let Schedule::Interval {
+                    anchor_utc,
+                    period_seconds,
+                } = crate::interval::resolve(seconds, start_local, clock)?
+                else {
+                    unreachable!()
+                };
+                Schedule::IntervalAfterClose {
+                    next_utc: crate::interval::next_after(
+                        anchor_utc,
+                        period_seconds,
+                        clock.sample().utc,
+                    ),
+                    period_seconds,
+                }
+            }
             Self::AfterSeconds { seconds } => {
                 ensure!(seconds > 0, "Укажите положительное время до напоминания");
                 Schedule::Once {
@@ -429,11 +507,45 @@ impl Application {
         let after = self.eligible_after.entry(id).or_insert(now);
         *after = (*after).max(now);
     }
-    pub fn close_toast(&mut self, id: ReminderId) {
+    pub fn close_toast(&mut self, id: ReminderId) -> Result<()> {
         if self.toasts.iter().any(|t| t.reminder_id == id) {
-            self.skip_through(id, self.clock.sample().utc);
+            let now = self.clock.sample().utc;
+            let mut next = self.state.clone();
+            if let Some(reminder) = next.reminders.iter_mut().find(|r| r.id == id) {
+                reminder.schedule.restart_after_close(now)?;
+            }
+            if next.reminders != self.state.reminders {
+                self.store.save(&next)?;
+                self.state = next;
+            }
+            self.skip_through(id, now);
             self.toasts.retain(|t| t.reminder_id != id);
         }
+        Ok(())
+    }
+    pub fn schedule_status(&self, id: ReminderId) -> Option<String> {
+        let reminder = self.state.reminders.iter().find(|r| r.id == id)?;
+        if reminder.paused || reminder.completed {
+            return None;
+        }
+        if reminder.schedule.is_after_close() && self.toasts.iter().any(|t| t.reminder_id == id) {
+            return Some("Ожидает закрытия уведомления".into());
+        }
+        let after = self.clock.sample().utc.max(
+            self.eligible_after
+                .get(&id)
+                .copied()
+                .unwrap_or(self.last.utc),
+        );
+        reminder
+            .schedule
+            .next_after_cursor(after, self.clock(), reminder.calendar_cursor)
+            .map(|at| {
+                format!(
+                    "Следующее {}",
+                    self.clock.local_at(at).format("%d.%m.%Y в %H:%M:%S")
+                )
+            })
     }
     pub fn create(&mut self, input: CreateReminder, context: &CommandContext) -> Result<Reminder> {
         let schedule = input.schedule.resolve(context, self.clock())?;
@@ -477,6 +589,12 @@ impl Application {
         let now = self.clock.sample();
         let mut next = self.state.clone();
         for reminder in &mut next.reminders {
+            if !self.toasts.iter().any(|t| t.reminder_id == reminder.id)
+                && let Some((at, _)) = reminder.schedule.after_close_next_mut()
+                && at.is_none_or(|at| at <= now.utc)
+            {
+                reminder.schedule.restart_after_close(now.utc)?;
+            }
             if reminder.schedule.is_calendar_repeating() {
                 let local_now = self.clock.local_at(now.utc);
                 reminder.calendar_cursor = Some(
@@ -514,6 +632,16 @@ impl Application {
             if reminder.paused || reminder.completed {
                 continue;
             }
+            if reminder.schedule.is_after_close() {
+                if self.toasts.iter().any(|t| t.reminder_id == reminder.id) {
+                    continue;
+                }
+                if let Some((at, _)) = reminder.schedule.after_close_next_mut()
+                    && at.is_none()
+                {
+                    reminder.schedule.restart_after_close(now.utc)?;
+                }
+            }
             let due = reminder
                 .schedule
                 .next_after_cursor(
@@ -534,6 +662,9 @@ impl Application {
                             .calendar_cursor
                             .map_or(consumed, |cursor| cursor.max(consumed)),
                     );
+                }
+                if let Some((next, _)) = reminder.schedule.after_close_next_mut() {
+                    *next = None;
                 }
                 consumed.push(reminder.id);
                 reminder.completed = reminder.schedule.ended_at(now.utc, self.clock());

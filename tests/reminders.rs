@@ -108,7 +108,7 @@ fn one_shot_survives_restart_then_opens_a_snapshot_and_completes_offline() {
     assert!(app.reminders()[0].completed);
     assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
     assert_eq!(app.open_toasts()[0].text, "Ёжик пьёт чай");
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     assert!(app.open_toasts().is_empty());
     let app = Application::open(clock, Box::new(JsonStore::new(&path))).unwrap();
     assert!(app.reminders()[0].completed);

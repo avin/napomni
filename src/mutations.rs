@@ -174,7 +174,7 @@ impl Application {
         let restored = undo.before.map(|mut reminder| {
             if let Some(index) = existing {
                 let current = &next.reminders[index];
-                if current.schedule == reminder.schedule {
+                if current.schedule.same_rule(&reminder.schedule) {
                     // Preserve scheduling progress accrued since the data operation.
                     let mut merged = current.clone();
                     merged.text = reminder.text;

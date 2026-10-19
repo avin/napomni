@@ -378,8 +378,10 @@ impl ToastStack {
         }
     }
     fn dismiss(&mut self, id: ReminderId, cx: &mut Context<Self>) {
-        if self.source == Source::Live {
-            crate::reminder_ui::close(id, cx);
+        if self.source == Source::Live && !crate::reminder_ui::close(id, cx) {
+            self.drag = None;
+            cx.notify();
+            return;
         }
         let snapshots = self
             .snapshots

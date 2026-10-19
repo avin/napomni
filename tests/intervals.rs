@@ -114,7 +114,7 @@ fn open_repeat_is_unchanged_and_close_consumes_missed_repeat_only_for_its_id() {
         )
         .unwrap();
     clock.advance(660);
-    app.close_toast(first.id);
+    app.close_toast(first.id).unwrap();
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 1);
     assert_eq!(app.open_toasts()[0].reminder_id, second.id);
@@ -141,7 +141,7 @@ fn sleep_restart_and_timezone_changes_skip_missed_occurrences_and_preserve_phase
         app.tick().unwrap();
         assert_eq!(app.open_toasts().len(), 1);
         if sleep {
-            app.close_toast(reminder.id);
+            app.close_toast(reminder.id).unwrap();
             clock.now.lock().unwrap().utc += Duration::minutes(35);
             app.tick().unwrap();
         } else {

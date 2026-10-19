@@ -653,7 +653,24 @@ impl MainWindow {
             .map(|app| {
                 app.reminders()
                     .iter()
-                    .map(|r| (r.clone(), r.schedule.description(app.clock())))
+                    .map(|r| {
+                        let description = format!(
+                            "{} ({})",
+                            r.schedule
+                                .description(app.clock())
+                                .replace(" (местное время)", ""),
+                            if r.sound {
+                                "со звуком"
+                            } else {
+                                "без звука"
+                            }
+                        );
+                        let description = match app.schedule_status(r.id) {
+                            Some(status) => format!("{description}\n{status}"),
+                            None => description,
+                        };
+                        (r.clone(), description)
+                    })
                     .collect::<Vec<_>>()
             })
             .unwrap_or_default();
@@ -736,14 +753,6 @@ impl MainWindow {
             let deletion_text = r.text.clone();
             let paused = r.paused;
             let selected = self.selected_id == Some(id);
-            let description = description.replace(
-                "(местное время)",
-                if r.sound {
-                    "(со звуком)"
-                } else {
-                    "(без звука)"
-                },
-            );
             list = list.child(
                 div()
                     .id(("reminder", id as usize))

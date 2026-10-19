@@ -59,14 +59,14 @@ fn overflowing_stack_preserves_every_snapshot_order_and_closes_only_chosen_card(
         before,
         "duplicate occurrence must preserve entry identity and order"
     );
-    app.close_toast(13);
+    app.close_toast(13).unwrap();
     let expected: Vec<_> = before
         .into_iter()
         .filter(|toast| toast.reminder_id != 13)
         .collect();
     assert_eq!(app.open_toasts(), expected);
     assert!(app.signal_active());
-    app.close_toast(1);
+    app.close_toast(1).unwrap();
     assert!(!app.signal_active());
     assert_eq!(app.open_toasts().len(), 22);
 }

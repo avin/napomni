@@ -114,7 +114,7 @@ fn edit_pause_delete_and_undo_preserve_the_open_toast_snapshot() {
     assert_eq!(app.reminders()[0].id, id);
     assert!(app.reminders()[0].paused);
     assert_eq!(app.open_toasts(), &[snapshot]);
-    app.close_toast(id);
+    app.close_toast(id).unwrap();
     assert!(!app.signal_active());
     assert!(!app.can_undo());
     app.tick().unwrap();
@@ -289,7 +289,7 @@ fn recurring_resume_and_undo_skip_elapsed_grid_points_only_for_the_affected_reco
     )
     .unwrap();
     assert_eq!(app.open_toasts(), &[snapshot]);
-    app.close_toast(id);
+    app.close_toast(id).unwrap();
     clock.advance(75);
     app.set_paused(id, true).unwrap();
     app.undo().unwrap();
@@ -301,7 +301,7 @@ fn recurring_resume_and_undo_skip_elapsed_grid_points_only_for_the_affected_reco
     assert_eq!(app.open_toasts()[0].reminder_id, id);
     assert!(!app.open_toasts()[0].sound);
     app.delete(id).unwrap();
-    app.close_toast(id);
+    app.close_toast(id).unwrap();
     clock.advance(70);
     app.undo().unwrap();
     app.tick().unwrap();
@@ -323,7 +323,7 @@ fn editing_time_after_clock_rollback_allows_the_new_future_deadline() {
     let id = create(&mut app, clock.as_ref(), 60);
     clock.advance(60);
     app.tick().unwrap();
-    app.close_toast(id);
+    app.close_toast(id).unwrap();
     clock.0.lock().unwrap().utc -= Duration::seconds(60);
     app.tick().unwrap();
     app.update(
@@ -373,7 +373,7 @@ fn undo_of_calendar_property_edit_keeps_occurrences_consumed_since_the_edit() {
         clock.advance(60);
         app.tick().unwrap();
         assert_eq!(app.open_toasts().len(), 1);
-        app.close_toast(id);
+        app.close_toast(id).unwrap();
     }
     app.undo().unwrap();
     assert!(app.reminders()[0].sound);

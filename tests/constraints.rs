@@ -76,7 +76,7 @@ fn date_bounds_are_inclusive_and_end_does_not_close_the_existing_toast() {
     clock.set("2026-10-20T00:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     clock.set("2026-10-21T23:30:00Z");
     app.tick().unwrap();
     let last = app.open_toasts().to_vec();
@@ -84,7 +84,7 @@ fn date_bounds_are_inclusive_and_end_does_not_close_the_existing_toast() {
     app.tick().unwrap();
     assert_eq!(app.open_toasts(), last);
     assert!(app.reminders()[0].completed);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     clock.set("2026-10-23T00:00:00Z");
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
@@ -135,11 +135,11 @@ fn half_hour_weekday_window_exclusion_and_restart_preserve_the_original_phase() 
     clock.set("2026-10-29T09:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     clock.set("2026-10-29T18:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 1);
-    app.close_toast(reminder.id);
+    app.close_toast(reminder.id).unwrap();
     for at in [
         "2026-10-29T18:00:01Z",
         "2026-10-30T09:00:00Z",
