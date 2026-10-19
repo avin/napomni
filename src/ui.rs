@@ -2,7 +2,7 @@ use crate::schedule_demo;
 use gpui::assets::IconName;
 use gpui::component::{
     ActiveTheme, Disableable, Icon, Selectable, Sizable, WindowExt,
-    button::{Button, ButtonVariants},
+    button::{Button, ButtonVariant, ButtonVariants},
     input::{
         Input, InputEvent, InputGroup, InputGroupAddon, InputGroupAddonAlignment, InputGroupButton,
         InputState,
@@ -209,6 +209,34 @@ impl MainWindow {
         };
         self.history_scroll.scroll_to_bottom();
         cx.notify();
+    }
+    fn confirm_delete(
+        &mut self,
+        id: ReminderId,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let parent = cx.entity().downgrade();
+        window.open_alert_dialog(cx, move |dialog, _, _| {
+            let parent = parent.clone();
+            dialog
+                .confirm()
+                .title("Удалить напоминание?")
+                .description(format!(
+                    "#{}: «{}»\nУдаление можно отменить кнопкой отмены последнего действия.",
+                    id, text
+                ))
+                .cancel_text("Отмена")
+                .ok_text("Удалить")
+                .ok_variant(ButtonVariant::Danger)
+                .on_ok(move |_, _, cx| {
+                    let _ = parent.update(cx, |view, cx| {
+                        view.apply_list_action(ListAction::Delete(id), cx);
+                    });
+                    true
+                })
+        });
     }
     fn open_catalog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.save_connection(cx) {
@@ -705,6 +733,7 @@ impl MainWindow {
         }
         for (r, description) in visible {
             let id = r.id;
+            let deletion_text = r.text.clone();
             let paused = r.paused;
             let selected = self.selected_id == Some(id);
             let description = description.replace(
@@ -719,7 +748,11 @@ impl MainWindow {
                 div()
                     .id(("reminder", id as usize))
                     .flex_shrink_0()
-                    .p_3()
+                    .flex()
+                    .flex_col()
+                    .px_3()
+                    .py_1()
+                    .line_height(px(20.))
                     .rounded_lg()
                     .border_2()
                     .border_color(rgb(r.border))
@@ -735,7 +768,7 @@ impl MainWindow {
                                     .min_w_0()
                                     .flex()
                                     .flex_col()
-                                    .gap_2()
+                                    .gap_1()
                                     .child(
                                         div()
                                             .font_weight(FontWeight::SEMIBOLD)
@@ -747,6 +780,7 @@ impl MainWindow {
                                             .gap_2()
                                             .items_start()
                                             .text_sm()
+                                            .line_height(px(18.))
                                             .text_color(t.muted_foreground)
                                             .child(TextLineIcon(Icon::new(IconName::Clock).small()))
                                             .child(
@@ -757,14 +791,16 @@ impl MainWindow {
                     )
                     .child(
                         div()
-                            .mt_2()
+                            .mt_1()
                             .flex()
                             .flex_wrap()
-                            .gap_1()
+                            .gap_3()
                             .child(
                                 Button::new("edit")
                                     .ghost()
                                     .small()
+                                    .h(px(24.))
+                                    .px_0()
                                     .icon(IconName::SquarePen)
                                     .label("Изменить")
                                     .disabled(self.busy)
@@ -780,6 +816,8 @@ impl MainWindow {
                                     Button::new("pause")
                                         .ghost()
                                         .small()
+                                        .h(px(24.))
+                                        .px_0()
                                         .icon(if paused {
                                             IconName::Play
                                         } else {
@@ -800,12 +838,14 @@ impl MainWindow {
                                 Button::new("delete")
                                     .ghost()
                                     .small()
+                                    .h(px(24.))
+                                    .px_0()
                                     .icon(IconName::Trash)
                                     .tooltip("Удалить напоминание")
                                     .accessibility_label("Удалить напоминание")
                                     .disabled(self.busy)
-                                    .on_click(cx.listener(move |v, _, _, cx| {
-                                        v.apply_list_action(ListAction::Delete(id), cx)
+                                    .on_click(cx.listener(move |v, _, window, cx| {
+                                        v.confirm_delete(id, deletion_text.clone(), window, cx)
                                     })),
                             ),
                     ),

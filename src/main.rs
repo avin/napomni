@@ -32,8 +32,6 @@ fn tray() -> Result<TrayIcon> {
     let menu = Menu::new();
     menu.append_items(&[
         &MenuItem::with_id("open", "Открыть напоминания", true, None),
-        &MenuItem::with_id("stack", "Открыть стопку тостов", true, None),
-        &MenuItem::with_id("demo", "Показать тестовые тосты", true, None),
         &PredefinedMenuItem::separator(),
         &MenuItem::with_id("quit", "Выход", true, None),
     ])?;
@@ -183,8 +181,6 @@ fn main() {
                             while let Ok(event) = MenuEvent::receiver().try_recv() {
                                 match event.id.as_ref() {
                                     "open" => open_main(cx),
-                                    "demo" => schedule_demo(cx),
-                                    "stack" => toast_stack::focus(cx),
                                     "quit" => {
                                         reminder_ui::shutdown(cx);
                                         cx.quit();

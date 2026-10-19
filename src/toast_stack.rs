@@ -72,32 +72,6 @@ pub fn show_demo(cx: &mut App) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// This is only called by an explicit tray action, never by a new occurrence.
-pub fn focus(cx: &mut App) {
-    for handle in [cx.global::<Stacks>().live, cx.global::<Stacks>().demo]
-        .into_iter()
-        .flatten()
-    {
-        if handle
-            .update(cx, |view, window, cx| {
-                if view.snapshots.is_empty() {
-                    return false;
-                }
-                native::toast_allow_focus(window, true);
-                window.activate_window();
-                view.focus.focus(window, cx);
-                view.keyboard = true;
-                view.expanded = true;
-                cx.notify();
-                true
-            })
-            .unwrap_or(false)
-        {
-            break;
-        }
-    }
-}
-
 fn update(
     handle: Option<WindowHandle<ToastStack>>,
     snapshots: Vec<ToastSnapshot>,
