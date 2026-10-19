@@ -156,6 +156,22 @@ impl Schedule {
             _ => None,
         }
     }
+    fn after_close_anchor(&self) -> Option<DateTime<Utc>> {
+        match self {
+            Self::Constrained { base, .. } => base.after_close_anchor(),
+            Self::IntervalAfterClose { next_utc, .. } => *next_utc,
+            _ => None,
+        }
+    }
+    fn after_close_needs_restart(&self, through: DateTime<Utc>, clock: &dyn Clock) -> bool {
+        let Some(anchor) = self.after_close_anchor() else {
+            return true;
+        };
+        anchor
+            .checked_sub_signed(Duration::nanoseconds(1))
+            .and_then(|before| self.next_after(before, clock))
+            .is_some_and(|deadline| deadline <= through)
+    }
     pub(crate) fn restart_after_close(&mut self, now: DateTime<Utc>) -> Result<()> {
         if let Some((next, seconds)) = self.after_close_next_mut() {
             *next = Some(
@@ -375,13 +391,19 @@ pub struct Reminder {
     #[serde(default)]
     pub calendar_cursor: Option<NaiveDateTime>,
 }
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToastSnapshot {
     pub reminder_id: ReminderId,
     pub text: String,
     pub border: u32,
     pub sound: bool,
     pub sequence: u64,
+}
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct SnoozedToast {
+    pub snapshot: ToastSnapshot,
+    pub snoozed_at: DateTime<Utc>,
+    pub at: DateTime<Utc>,
 }
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -395,6 +417,8 @@ pub struct CreateReminder {
 pub struct Persisted {
     pub reminders: Vec<Reminder>,
     pub next_id: ReminderId,
+    #[serde(default)]
+    pub snoozed: Vec<SnoozedToast>,
     #[serde(default)]
     pub undo: Option<crate::mutations::UndoEntry>,
     #[serde(default)]
@@ -488,7 +512,7 @@ impl Application {
             sequence: 0,
             eligible_after: HashMap::new(),
         };
-        app.resume()?;
+        app.resume_scheduling(true)?;
         Ok(app)
     }
     pub fn clock(&self) -> &dyn Clock {
@@ -506,6 +530,35 @@ impl Application {
     pub(crate) fn skip_through(&mut self, id: ReminderId, now: DateTime<Utc>) {
         let after = self.eligible_after.entry(id).or_insert(now);
         *after = (*after).max(now);
+    }
+    /// Hide this occurrence without closing it or changing the recurrence phase.
+    pub fn snooze_toast(&mut self, id: ReminderId, minutes: u32) -> Result<()> {
+        ensure!(minutes > 0, "Укажите положительное число минут");
+        let Some(snapshot) = self.toasts.iter().find(|t| t.reminder_id == id).cloned() else {
+            return Ok(());
+        };
+        let reminder = self
+            .state
+            .reminders
+            .iter()
+            .find(|r| r.id == id)
+            .context("Напоминание удалено")?;
+        ensure!(!reminder.paused, "Напоминание на паузе");
+        let now = self.clock.sample().utc;
+        let at = now
+            .checked_add_signed(Duration::minutes(i64::from(minutes)))
+            .context("Слишком далёкое время")?;
+        let mut next = self.state.clone();
+        next.snoozed.retain(|s| s.snapshot.reminder_id != id);
+        next.snoozed.push(SnoozedToast {
+            snapshot,
+            snoozed_at: now,
+            at,
+        });
+        self.store.save(&next)?;
+        self.state = next;
+        self.toasts.retain(|t| t.reminder_id != id);
+        Ok(())
     }
     pub fn close_toast(&mut self, id: ReminderId) -> Result<()> {
         if self.toasts.iter().any(|t| t.reminder_id == id) {
@@ -525,21 +578,59 @@ impl Application {
     }
     pub fn schedule_status(&self, id: ReminderId) -> Option<String> {
         let reminder = self.state.reminders.iter().find(|r| r.id == id)?;
-        if reminder.paused || reminder.completed {
+        if reminder.paused {
+            return None;
+        }
+        let now = self.clock.sample().utc;
+        let cursor = self
+            .eligible_after
+            .get(&id)
+            .copied()
+            .unwrap_or(self.last.utc)
+            .max(self.last.utc);
+        let scheduled = (!reminder.completed)
+            .then(|| {
+                reminder
+                    .schedule
+                    .next_after_cursor(cursor, self.clock(), reminder.calendar_cursor)
+            })
+            .flatten();
+        if let Some(snoozed) = self
+            .state
+            .snoozed
+            .iter()
+            .find(|s| s.snapshot.reminder_id == id)
+        {
+            let at = scheduled
+                .filter(|at| *at <= snoozed.at)
+                .unwrap_or(snoozed.at);
+            if at <= now {
+                return Some("Ожидает показа уведомления".into());
+            }
+            let label = if scheduled.is_some_and(|regular| regular <= snoozed.at) {
+                "Следующее"
+            } else {
+                "Отложено до"
+            };
+            return Some(format!(
+                "{label} {}",
+                self.clock.local_at(at).format("%d.%m.%Y в %H:%M:%S")
+            ));
+        }
+        if reminder.completed {
             return None;
         }
         if reminder.schedule.is_after_close() && self.toasts.iter().any(|t| t.reminder_id == id) {
             return Some("Ожидает закрытия уведомления".into());
         }
-        let after = self.clock.sample().utc.max(
-            self.eligible_after
-                .get(&id)
-                .copied()
-                .unwrap_or(self.last.utc),
-        );
+        // A due occurrence is pending work, never a prediction of a later grid point.
+        if scheduled.is_some_and(|at| at <= now) && !self.toasts.iter().any(|t| t.reminder_id == id)
+        {
+            return Some("Ожидает показа уведомления".into());
+        }
         reminder
             .schedule
-            .next_after_cursor(after, self.clock(), reminder.calendar_cursor)
+            .next_after_cursor(now.max(cursor), self.clock(), reminder.calendar_cursor)
             .map(|at| {
                 format!(
                     "Следующее {}",
@@ -584,15 +675,74 @@ impl Application {
         self.skip_through(id, self.clock.sample().utc);
         Ok(reminder)
     }
-    /// After startup or suspension, elapsed occurrences are consumed without a toast.
+    fn take_due_snoozes(
+        &self,
+        next: &mut Persisted,
+        now: DateTime<Utc>,
+        scheduled: &[ReminderId],
+    ) -> Vec<ToastSnapshot> {
+        let mut snapshots = Vec::new();
+        next.snoozed.retain(|snoozed| {
+            let id = snoozed.snapshot.reminder_id;
+            let Some(reminder) = next.reminders.iter().find(|r| r.id == id) else {
+                return false;
+            };
+            if reminder.paused || scheduled.contains(&id) {
+                return false;
+            }
+            // Also detect regular occurrences skipped during sleep or downtime.
+            if !reminder.schedule.is_after_close()
+                && reminder
+                    .schedule
+                    .next_after(snoozed.snoozed_at, self.clock())
+                    .is_some_and(|at| at <= snoozed.at && at <= now)
+            {
+                return false;
+            }
+            if snoozed.at <= now {
+                if !self.toasts.iter().any(|t| t.reminder_id == id) {
+                    snapshots.push(snoozed.snapshot.clone());
+                }
+                return false;
+            }
+            true
+        });
+        snapshots
+    }
+    fn show_snapshots(&mut self, snapshots: Vec<ToastSnapshot>) {
+        for mut snapshot in snapshots {
+            self.sequence += 1;
+            snapshot.sequence = self.sequence;
+            self.toasts.insert(0, snapshot);
+        }
+    }
+    /// After startup or suspension, elapsed scheduled occurrences are consumed without a toast.
+    /// Explicitly snoozed occurrences remain eligible for replay.
     pub fn resume(&mut self) -> Result<()> {
+        self.resume_scheduling(false)
+    }
+    fn resume_scheduling(&mut self, restart_after_close: bool) -> Result<()> {
         let now = self.clock.sample();
         let mut next = self.state.clone();
+        if restart_after_close {
+            next.snoozed.retain(|s| {
+                !next
+                    .reminders
+                    .iter()
+                    .any(|r| r.id == s.snapshot.reminder_id && r.schedule.is_after_close())
+            });
+        }
         for reminder in &mut next.reminders {
-            if !self.toasts.iter().any(|t| t.reminder_id == reminder.id)
-                && let Some((at, _)) = reminder.schedule.after_close_next_mut()
-                && at.is_none_or(|at| at <= now.utc)
-            {
+            let missing_occurrence = !self.toasts.iter().any(|t| t.reminder_id == reminder.id)
+                && !self
+                    .state
+                    .snoozed
+                    .iter()
+                    .any(|s| s.snapshot.reminder_id == reminder.id)
+                && reminder
+                    .schedule
+                    .after_close_needs_restart(now.utc, self.clock());
+            if reminder.schedule.is_after_close() && (restart_after_close || missing_occurrence) {
                 reminder.schedule.restart_after_close(now.utc)?;
             }
             if reminder.schedule.is_calendar_repeating() {
@@ -607,10 +757,12 @@ impl Application {
                 reminder.completed = true;
             }
         }
-        if next.reminders != self.state.reminders {
+        let snapshots = self.take_due_snoozes(&mut next, now.utc, &[]);
+        if next.reminders != self.state.reminders || next.snoozed != self.state.snoozed {
             self.store.save(&next)?;
             self.state = next;
         }
+        self.show_snapshots(snapshots);
         self.last = now;
         Ok(())
     }
@@ -633,11 +785,24 @@ impl Application {
                 continue;
             }
             if reminder.schedule.is_after_close() {
-                if self.toasts.iter().any(|t| t.reminder_id == reminder.id) {
+                if self.toasts.iter().any(|t| t.reminder_id == reminder.id)
+                    || self
+                        .state
+                        .snoozed
+                        .iter()
+                        .any(|s| s.snapshot.reminder_id == reminder.id)
+                {
                     continue;
                 }
-                if let Some((at, _)) = reminder.schedule.after_close_next_mut()
-                    && at.is_none()
+                let consumed_through = self
+                    .eligible_after
+                    .get(&reminder.id)
+                    .copied()
+                    .unwrap_or(self.last.utc)
+                    .max(self.last.utc);
+                if reminder
+                    .schedule
+                    .after_close_needs_restart(consumed_through, self.clock())
                 {
                     reminder.schedule.restart_after_close(now.utc)?;
                 }
@@ -681,18 +846,15 @@ impl Application {
                 reminder.completed = true;
             }
         }
-        if next.reminders != self.state.reminders {
+        snapshots.extend(self.take_due_snoozes(&mut next, now.utc, &consumed));
+        if next.reminders != self.state.reminders || next.snoozed != self.state.snoozed {
             self.store.save(&next)?;
             self.state = next;
         }
         for id in consumed {
             self.skip_through(id, now.utc);
         }
-        for mut snapshot in snapshots {
-            self.sequence += 1;
-            snapshot.sequence = self.sequence;
-            self.toasts.insert(0, snapshot);
-        }
+        self.show_snapshots(snapshots);
         self.last = now;
         Ok(())
     }

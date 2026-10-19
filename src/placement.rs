@@ -26,12 +26,27 @@ impl Corner {
         }
     }
 }
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub monitor: Option<String>,
     pub corner: Corner,
     pub autostart: bool,
+    #[serde(default = "default_snooze_minutes")]
+    pub snooze_minutes: u32,
+}
+fn default_snooze_minutes() -> u32 {
+    5
+}
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            monitor: None,
+            corner: Corner::default(),
+            autostart: false,
+            snooze_minutes: default_snooze_minutes(),
+        }
+    }
 }
 #[derive(Debug, Clone, Copy)]
 pub struct WorkArea {
@@ -66,12 +81,16 @@ pub struct SettingsService<P> {
 }
 impl<P: DesktopPlatform> SettingsService<P> {
     pub fn open(path: PathBuf, platform: P) -> Result<Self> {
-        let settings = match std::fs::read(&path) {
+        let settings: Settings = match std::fs::read(&path) {
             Ok(bytes) => serde_json::from_slice(&bytes)
                 .context("Не удалось прочитать настройки размещения")?,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Settings::default(),
             Err(error) => return Err(error.into()),
         };
+        ensure!(
+            (1..=525_600).contains(&settings.snooze_minutes),
+            "Время отложения должно быть от 1 до 525600 минут"
+        );
         Ok(Self {
             path,
             settings,
@@ -85,6 +104,10 @@ impl<P: DesktopPlatform> SettingsService<P> {
         self.platform.monitors()
     }
     pub fn save(&mut self, next: Settings) -> Result<()> {
+        ensure!(
+            (1..=525_600).contains(&next.snooze_minutes),
+            "Время отложения должно быть от 1 до 525600 минут"
+        );
         if let Some(parent) = self.path.parent() {
             std::fs::create_dir_all(parent)?;
         }

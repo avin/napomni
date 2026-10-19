@@ -204,3 +204,30 @@ fn explicit_starts_keep_grid_while_invalid_intervals_leave_data_unchanged() {
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, future.id);
 }
+
+#[test]
+fn displayed_next_time_advances_even_when_a_fixed_toast_and_reminder_are_unchanged() {
+    let directory = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::new());
+    let mut app = Application::open(
+        clock.clone(),
+        Box::new(JsonStore::new(directory.path().join("data.json"))),
+    )
+    .unwrap();
+    let context = CommandContext::capture(clock.as_ref(), "Каждые 10 минут", None);
+    let id = app.create(interval(600, None), &context).unwrap().id;
+    clock.advance(600);
+    app.tick().unwrap();
+    let records = app.reminders().to_vec();
+    let toasts = app.open_toasts().to_vec();
+    let old_status = app.schedule_status(id);
+    clock.advance(900);
+    app.tick().unwrap();
+    assert_eq!(records, app.reminders());
+    assert_eq!(toasts, app.open_toasts());
+    assert_ne!(old_status, app.schedule_status(id));
+    assert_eq!(
+        app.schedule_status(id).as_deref(),
+        Some("Следующее 18.10.2026 в 12:30:00")
+    );
+}

@@ -100,6 +100,9 @@ impl Application {
     fn commit_change(&mut self, mut next: Persisted, undo: UndoEntry) -> Result<()> {
         let id = undo.id;
         self.skip_calendar_through_now(&mut next, id);
+        if !next.reminders.iter().any(|r| r.id == id && !r.paused) {
+            next.snoozed.retain(|s| s.snapshot.reminder_id != id);
+        }
         next.undo = Some(undo);
         self.store.save(&next)?;
         self.state = next;
@@ -198,6 +201,11 @@ impl Application {
         if restored.is_none() {
             next.reminders.retain(|r| r.id != undo.id);
         }
+        next.snoozed.retain(|s| {
+            next.reminders
+                .iter()
+                .any(|r| r.id == s.snapshot.reminder_id && !r.paused)
+        });
         next.undo = None;
         self.skip_calendar_through_now(&mut next, undo.id);
         self.store.save(&next)?;

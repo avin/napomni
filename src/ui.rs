@@ -68,6 +68,7 @@ pub struct MainWindow {
     base_url: Entity<InputState>,
     api_key: Entity<InputState>,
     model: Entity<InputState>,
+    snooze_minutes: Entity<InputState>,
     pub status: String,
     pub busy: bool,
     verified_connection: Option<Connection>,
@@ -134,6 +135,40 @@ impl MainWindow {
             })
             .detach();
         }
+        let snooze_minutes = cx.new(|cx| {
+            InputState::new(window, cx).default_value(
+                cx.global::<crate::settings_ui::DesktopSettings>()
+                    .0
+                    .settings()
+                    .snooze_minutes
+                    .to_string(),
+            )
+        });
+        cx.subscribe(&snooze_minutes, |this, _, event, cx| {
+            if matches!(event, InputEvent::Change) {
+                let result = (|| -> anyhow::Result<()> {
+                    let minutes = this
+                        .snooze_minutes
+                        .read(cx)
+                        .value()
+                        .trim()
+                        .parse::<u32>()
+                        .map_err(|_| {
+                            anyhow::anyhow!("Укажите время отложения целым числом минут")
+                        })?;
+                    let service = &mut cx.global_mut::<crate::settings_ui::DesktopSettings>().0;
+                    let mut next = service.settings().clone();
+                    next.snooze_minutes = minutes;
+                    service.save(next)
+                })();
+                this.status = result
+                    .err()
+                    .map(|error| error.to_string())
+                    .unwrap_or_default();
+                cx.notify();
+            }
+        })
+        .detach();
         let history_scroll = ScrollHandle::new();
         history_scroll.scroll_to_bottom();
         Self {
@@ -142,6 +177,7 @@ impl MainWindow {
             base_url,
             api_key,
             model,
+            snooze_minutes,
             status,
             busy: false,
             verified_connection: None,
@@ -587,6 +623,10 @@ impl MainWindow {
                             .flex_col()
                             .gap_3()
                             .child(div().font_weight(FontWeight::SEMIBOLD).child("Тосты"))
+                            .child(field(
+                                "Откладывать на, мин",
+                                Input::new(&self.snooze_minutes),
+                            ))
                             .child(
                                 div()
                                     .flex()

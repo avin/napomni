@@ -189,7 +189,7 @@ fn waiting_state_survives_sleep_and_restart_restarts_without_a_phantom_toast() {
 }
 
 #[test]
-fn close_persists_the_next_occurrence_and_restart_keeps_its_remaining_time() {
+fn close_persists_the_next_occurrence_and_restart_starts_a_full_interval() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("data.json");
     let clock = Arc::new(TestClock::new());
@@ -200,12 +200,14 @@ fn close_persists_the_next_occurrence_and_restart_keeps_its_remaining_time() {
     app.tick().unwrap();
     clock.advance(300);
     app.close_toast(reminder.id).unwrap();
-    let expected = next(&app, reminder.id);
     drop(app);
     clock.advance(120);
     let mut app = Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap();
-    assert_eq!(next(&app, reminder.id), expected);
-    clock.advance(479);
+    assert_eq!(
+        next(&app, reminder.id),
+        Some(clock.sample().utc + Duration::minutes(10))
+    );
+    clock.advance(599);
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
@@ -492,4 +494,100 @@ fn undoing_a_property_edit_after_close_keeps_the_new_deadline() {
     clock.advance(1);
     app.tick().unwrap();
     assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+}
+
+#[test]
+fn startup_restarts_every_after_close_interval_even_with_a_future_or_snoozed_deadline() {
+    for (elapsed, snooze) in [(120, false), (900, false), (120, true), (900, true)] {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("data.json");
+        let clock = Arc::new(TestClock::new());
+        let mut app = Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap();
+        let context = CommandContext::capture(clock.as_ref(), "Создай", None);
+        let reminder = app.create(interval(600, None), &context).unwrap();
+        clock.advance(600);
+        app.tick().unwrap();
+        if snooze {
+            app.snooze_toast(reminder.id, 5).unwrap();
+        } else {
+            app.close_toast(reminder.id).unwrap();
+        }
+        drop(app);
+        clock.advance(elapsed);
+        let mut app = Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap();
+        assert!(
+            app.open_toasts().is_empty(),
+            "startup must not replay a snoozed after-close toast"
+        );
+        assert_eq!(
+            next(&app, reminder.id),
+            Some(clock.sample().utc + Duration::minutes(10))
+        );
+        let persisted: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert!(persisted["snoozed"].as_array().unwrap().is_empty());
+        assert_eq!(
+            persisted["reminders"][0]["schedule"]["next_utc"],
+            serde_json::json!(next(&app, reminder.id))
+        );
+        clock.advance(599);
+        app.tick().unwrap();
+        assert!(app.open_toasts().is_empty());
+        clock.advance(1);
+        app.tick().unwrap();
+        assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    }
+}
+
+#[test]
+fn resuming_an_overdue_paused_after_close_interval_restarts_instead_of_leaving_a_past_deadline() {
+    let directory = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::new());
+    let mut app = Application::open(
+        clock.clone(),
+        Box::new(JsonStore::new(directory.path().join("data.json"))),
+    )
+    .unwrap();
+    let context = CommandContext::capture(clock.as_ref(), "Создай", None);
+    let id = app.create(interval(600, None), &context).unwrap().id;
+    app.set_paused(id, true).unwrap();
+    clock.advance(900);
+    app.tick().unwrap();
+    app.set_paused(id, false).unwrap();
+    app.tick().unwrap();
+    assert_eq!(
+        next(&app, id),
+        Some(clock.sample().utc + Duration::minutes(10))
+    );
+    assert!(app.open_toasts().is_empty());
+    clock.advance(599);
+    app.tick().unwrap();
+    assert!(app.open_toasts().is_empty());
+    clock.advance(1);
+    app.tick().unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, id);
+}
+
+#[test]
+fn a_due_unprocessed_after_close_occurrence_is_reported_as_waiting_for_display() {
+    let directory = tempfile::tempdir().unwrap();
+    let clock = Arc::new(TestClock::new());
+    let mut app = Application::open(
+        clock.clone(),
+        Box::new(JsonStore::new(directory.path().join("data.json"))),
+    )
+    .unwrap();
+    let context = CommandContext::capture(clock.as_ref(), "Создай", None);
+    let id = app.create(interval(600, None), &context).unwrap().id;
+    clock.advance(900);
+    assert_eq!(
+        app.schedule_status(id).as_deref(),
+        Some("Ожидает показа уведомления")
+    );
+    app.tick().unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, id);
+    assert_eq!(
+        app.schedule_status(id).as_deref(),
+        Some("Ожидает закрытия уведомления")
+    );
 }

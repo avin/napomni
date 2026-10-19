@@ -102,12 +102,14 @@ fn settings_survive_restart_and_autostart_is_applied() {
         monitor: Some("primary".into()),
         corner: Corner::BottomLeft,
         autostart: true,
+        snooze_minutes: 12,
     })
     .unwrap();
     drop(app);
     let app = SettingsService::open(path.clone(), Platform(Cell::new(false))).unwrap();
     assert_eq!(app.settings().corner, Corner::BottomLeft);
     assert!(app.settings().autostart);
+    assert_eq!(app.settings().snooze_minutes, 12);
     assert_eq!(
         app.placement().unwrap().card(0, 156.).unwrap(),
         Rect {
@@ -118,4 +120,42 @@ fn settings_survive_restart_and_autostart_is_applied() {
         }
     );
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn existing_settings_default_to_five_minute_snooze() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    std::fs::write(&path, r#"{"corner":"BottomLeft","autostart":true}"#).unwrap();
+    let app = SettingsService::open(path, Platform(Cell::new(false))).unwrap();
+    assert_eq!(app.settings().snooze_minutes, 5);
+    assert_eq!(Settings::default().snooze_minutes, 5);
+}
+
+#[test]
+fn invalid_snooze_duration_does_not_replace_saved_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    let mut app = SettingsService::open(path.clone(), Platform(Cell::new(false))).unwrap();
+    app.save(Settings::default()).unwrap();
+    let saved = std::fs::read(&path).unwrap();
+    for minutes in [0, 525_601, u32::MAX] {
+        let invalid = Settings {
+            snooze_minutes: minutes,
+            ..Settings::default()
+        };
+        assert!(app.save(invalid).is_err());
+        assert_eq!(app.settings().snooze_minutes, 5);
+        assert_eq!(std::fs::read(&path).unwrap(), saved);
+    }
+}
+
+#[test]
+fn invalid_stored_snooze_duration_is_reported() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("settings.json");
+    for minutes in [0, 525_601] {
+        std::fs::write(&path, format!(r#"{{"snooze_minutes":{minutes}}}"#)).unwrap();
+        assert!(SettingsService::open(path.clone(), Platform(Cell::new(false))).is_err());
+    }
 }

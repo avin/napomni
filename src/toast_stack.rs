@@ -3,7 +3,7 @@
 use std::time::{Duration, Instant};
 
 use gpui::component::{
-    ActiveTheme, Icon, IconName, Sizable,
+    ActiveTheme, Disableable, Icon, IconName, Sizable,
     button::{Button, ButtonVariants},
 };
 use gpui::{prelude::*, *};
@@ -22,7 +22,10 @@ const FONT_SIZE: f32 = 16.;
 const LINE_HEIGHT: f32 = 24.;
 const BODY_TOP: f32 = 48.;
 const BODY_INSET: f32 = 16.;
-const CARD_CHROME: f32 = BODY_TOP + 16.;
+const SNOOZE_RIGHT: f32 = 46.;
+const SNOOZE_WIDTH: f32 = 28.;
+const SNOOZE_HEIGHT: f32 = 28.;
+const CARD_CHROME: f32 = BODY_TOP + BODY_INSET;
 
 #[derive(Clone, Copy, PartialEq)]
 enum Source {
@@ -171,6 +174,7 @@ struct Card {
     snapshot: ToastSnapshot,
     height: f32,
     measured_width: f32,
+    ring_since: Instant,
     start: Frame,
     target: Frame,
     since: Instant,
@@ -224,6 +228,7 @@ struct ToastStack {
     pulse_since: Instant,
     regions: Vec<Rect>,
     drag: Option<Drag>,
+    snooze_hover: Option<(ReminderId, Instant)>,
 }
 
 impl ToastStack {
@@ -261,6 +266,7 @@ impl ToastStack {
             pulse_since: now,
             regions: vec![],
             drag: None,
+            snooze_hover: None,
         }
         .with_snapshots(snapshots)
     }
@@ -302,6 +308,7 @@ impl ToastStack {
                     snapshot: snapshot.clone(),
                     height: 0.,
                     measured_width: 0.,
+                    ring_since: now,
                     start: Frame::default(),
                     target: Frame::default(),
                     since: now,
@@ -309,6 +316,12 @@ impl ToastStack {
                     departing: false,
                 });
             }
+        }
+        if self
+            .snooze_hover
+            .is_some_and(|(id, _)| !snapshots.iter().any(|s| s.reminder_id == id))
+        {
+            self.snooze_hover = None;
         }
         self.snapshots = snapshots;
         self.selected = self.selected.min(self.snapshots.len().saturating_sub(1));
@@ -393,6 +406,20 @@ impl ToastStack {
         self.drag = None;
         cx.notify();
     }
+    fn snooze(&mut self, id: ReminderId, cx: &mut Context<Self>) {
+        if self.source != Source::Live || !crate::reminder_ui::snooze(id, cx) {
+            return;
+        }
+        let snapshots = self
+            .snapshots
+            .iter()
+            .filter(|toast| toast.reminder_id != id)
+            .cloned()
+            .collect();
+        self.accept(snapshots);
+        self.drag = None;
+        cx.notify();
+    }
     fn finish_drag(&mut self, cx: &mut Context<Self>) {
         if let Some(drag) = self.drag.take() {
             let now = Instant::now();
@@ -454,6 +481,11 @@ impl ToastStack {
                 self.selected = self.selected.saturating_sub(1);
                 self.reveal_selected();
             }
+            "space" => {
+                if let Some(toast) = self.snapshots.get(self.selected) {
+                    self.snooze(toast.reminder_id, cx);
+                }
+            }
             "enter" | "backspace" | "delete" => {
                 if let Some(toast) = self.snapshots.get(self.selected) {
                     self.dismiss(toast.reminder_id, cx);
@@ -497,7 +529,7 @@ impl Render for ToastStack {
         }
         let surface = cx.theme().background;
         let text = cx.theme().foreground;
-        let muted = cx.theme().muted_foreground;
+        let bell_color = cx.theme().muted_foreground;
         let pulse = now.duration_since(self.pulse_since).as_secs_f32() / BORDER_PULSE.as_secs_f32();
         let border_opacity = 0.25 + 0.75 * (1. + (pulse * std::f32::consts::TAU).cos()) / 2.;
         let width = self.placement.viewport.width as f32 / self.placement.scale;
@@ -673,8 +705,15 @@ impl Render for ToastStack {
                     .get(self.selected)
                     .is_some_and(|s| s.reminder_id == id);
             let content_opacity = frame.content.clamp(0., 1.);
+            let ring_phase = now.duration_since(card.ring_since).as_secs_f32() % 3.;
+            let bell_angle = if ring_phase < 1. {
+                (ring_phase * std::f32::consts::TAU * 4.).sin() * 0.35 * (1. - ring_phase)
+            } else {
+                0.
+            };
             let accent: Hsla = rgb(card.snapshot.border).into();
             let close_top = (16. - frame.y).max(16.).min((frame.height - 44.).max(0.));
+            let snooze_top = close_top + (28. - SNOOZE_HEIGHT) / 2.;
             let content = div()
                 .size_full()
                 .opacity(content_opacity)
@@ -683,20 +722,13 @@ impl Render for ToastStack {
                         .absolute()
                         .top(px(16. - BORDER_WIDTH))
                         .left(px(BODY_INSET - BORDER_WIDTH))
-                        .text_color(accent)
-                        .child(Icon::new(IconName::Bell).with_size(px(18.))),
+                        .text_color(bell_color)
+                        .child(
+                            Icon::new(IconName::Bell)
+                                .with_size(px(18.))
+                                .rotate(radians(bell_angle)),
+                        ),
                 )
-                .when(card.snapshot.sound, |e| {
-                    e.child(
-                        div()
-                            .absolute()
-                            .top(px(16. - BORDER_WIDTH))
-                            .left(px(44. - BORDER_WIDTH))
-                            .text_size(px(12.))
-                            .text_color(muted)
-                            .child("Со звуком"),
-                    )
-                })
                 .child(
                     div()
                         .absolute()
@@ -704,6 +736,45 @@ impl Render for ToastStack {
                         .left(px(BODY_INSET - BORDER_WIDTH))
                         .w(px((width - BODY_INSET * 2.).max(1.)))
                         .child(card.snapshot.text.clone()),
+                )
+                .child(
+                    div()
+                        .id(("snooze-trigger", id))
+                        .absolute()
+                        .right(px(SNOOZE_RIGHT - BORDER_WIDTH))
+                        .top(px(snooze_top - BORDER_WIDTH))
+                        .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
+                            if *hovered && !departing {
+                                this.snooze_hover = Some((id, Instant::now()));
+                            } else if this
+                                .snooze_hover
+                                .is_some_and(|(hovered_id, _)| hovered_id == id)
+                            {
+                                this.snooze_hover = None;
+                            }
+                            cx.notify();
+                        }))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .child(
+                            Button::new(("snooze-toast", id))
+                                .child(Icon::new(IconName::Moon).with_size(px(14.)))
+                                .accessibility_label(format!(
+                                    "Отложить на {} мин",
+                                    cx.global::<DesktopSettings>().0.settings().snooze_minutes
+                                ))
+                                .ghost()
+                                .with_size(px(SNOOZE_HEIGHT))
+                                .w(px(SNOOZE_WIDTH))
+                                .h(px(SNOOZE_HEIGHT))
+                                .tab_stop(false)
+                                .disabled(self.source == Source::Demo || departing)
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    cx.stop_propagation();
+                                    if !departing {
+                                        this.snooze(id, cx);
+                                    }
+                                })),
+                        ),
                 )
                 .child(
                     div()
@@ -723,6 +794,36 @@ impl Render for ToastStack {
                                     }
                                 })),
                         ),
+                )
+                .when(
+                    !departing
+                        && self.snooze_hover.is_some_and(|(hovered_id, since)| {
+                            hovered_id == id
+                                && now.duration_since(since) >= Duration::from_millis(400)
+                        }),
+                    |content| {
+                        content.child(
+                            div()
+                                .absolute()
+                                .right(px(SNOOZE_RIGHT + SNOOZE_WIDTH + 8. - BORDER_WIDTH))
+                                .top(px(snooze_top - BORDER_WIDTH))
+                                .h(px(SNOOZE_HEIGHT))
+                                .px_2()
+                                .flex()
+                                .items_center()
+                                .whitespace_nowrap()
+                                .text_size(px(12.))
+                                .bg(cx.theme().popover)
+                                .text_color(cx.theme().popover_foreground)
+                                .border_1()
+                                .border_color(cx.theme().border)
+                                .rounded(px(4.))
+                                .child(format!(
+                                    "Отложить на {} мин",
+                                    cx.global::<DesktopSettings>().0.settings().snooze_minutes
+                                )),
+                        )
+                    },
                 );
             let mut element = div()
                 .id(("toast", card.snapshot.sequence))
@@ -745,12 +846,17 @@ impl Render for ToastStack {
                         }
                         let mouse_x = f32::from(event.position.x);
                         let mouse_y = f32::from(event.position.y);
-                        if mouse_x >= frame.x + frame.width - 44.
+                        let on_close = mouse_x >= frame.x + frame.width - 44.
                             && mouse_x < frame.x + frame.width - 14.
                             && mouse_y >= frame.y + close_top
-                            && mouse_y < frame.y + close_top + 28.
-                        {
-                            return; // Close remains a click target, never a drag handle.
+                            && mouse_y < frame.y + close_top + 28.;
+                        let on_snooze = mouse_x
+                            >= frame.x + frame.width - SNOOZE_RIGHT - SNOOZE_WIDTH
+                            && mouse_x < frame.x + frame.width - SNOOZE_RIGHT
+                            && mouse_y >= frame.y + snooze_top
+                            && mouse_y < frame.y + snooze_top + SNOOZE_HEIGHT;
+                        if on_close || on_snooze {
+                            return; // Action buttons remain click targets, never drag handles.
                         }
                         this.drag = Some(Drag {
                             id,
