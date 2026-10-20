@@ -727,7 +727,7 @@ impl Render for ToastStack {
                 .child(
                     div()
                         .absolute()
-                        .top(px(13. - BORDER_WIDTH))
+                        .top(px(close_top + (28. - 24.) / 2. - BORDER_WIDTH))
                         .left(px(BODY_INSET - BORDER_WIDTH))
                         .text_color(bell_color)
                         .child(
