@@ -15,7 +15,7 @@ use napomni::{
 use crate::{native, settings_ui::DesktopSettings};
 
 const TRANSITION: Duration = Duration::from_millis(220);
-const BORDER_PULSE: Duration = Duration::from_millis(1200);
+const BORDER_STEP: Duration = Duration::from_millis(230);
 const BORDER_WIDTH: f32 = 4.;
 const GAP: f32 = 12.;
 const FONT_SIZE: f32 = 16.;
@@ -530,8 +530,15 @@ impl Render for ToastStack {
         let surface = cx.theme().background;
         let text = cx.theme().foreground;
         let bell_color = cx.theme().muted_foreground;
-        let pulse = now.duration_since(self.pulse_since).as_secs_f32() / BORDER_PULSE.as_secs_f32();
-        let border_opacity = 0.25 + 0.75 * (1. + (pulse * std::f32::consts::TAU).cos()) / 2.;
+        let border_opacity = if (now.duration_since(self.pulse_since).as_millis()
+            / BORDER_STEP.as_millis())
+            % 2
+            == 0
+        {
+            1.
+        } else {
+            0.25
+        };
         let width = self.placement.viewport.width as f32 / self.placement.scale;
         let viewport_height = self.placement.viewport.height as f32 / self.placement.scale;
         for card in &mut self.cards {
@@ -705,12 +712,12 @@ impl Render for ToastStack {
                     .get(self.selected)
                     .is_some_and(|s| s.reminder_id == id);
             let content_opacity = frame.content.clamp(0., 1.);
-            let ring_phase = now.duration_since(card.ring_since).as_secs_f32() % 3.;
-            let bell_angle = if ring_phase < 1. {
-                (ring_phase * std::f32::consts::TAU * 4.).sin() * 0.35 * (1. - ring_phase)
-            } else {
-                0.
-            };
+            let ring_phase = now.duration_since(card.ring_since).as_secs_f32() % 2.;
+            // Vary the swing speed slightly without pausing or fading it out.
+            let bell_angle = (ring_phase * std::f32::consts::TAU * 4.
+                + 1.5 * (ring_phase * std::f32::consts::TAU / 2.).sin())
+            .sin()
+                * 0.6;
             let accent: Hsla = rgb(card.snapshot.border).into();
             let close_top = (16. - frame.y).max(16.).min((frame.height - 44.).max(0.));
             let snooze_top = close_top + (28. - SNOOZE_HEIGHT) / 2.;
@@ -720,12 +727,12 @@ impl Render for ToastStack {
                 .child(
                     div()
                         .absolute()
-                        .top(px(16. - BORDER_WIDTH))
+                        .top(px(13. - BORDER_WIDTH))
                         .left(px(BODY_INSET - BORDER_WIDTH))
                         .text_color(bell_color)
                         .child(
                             Icon::new(IconName::Bell)
-                                .with_size(px(18.))
+                                .with_size(px(24.))
                                 .rotate(radians(bell_angle)),
                         ),
                 )
