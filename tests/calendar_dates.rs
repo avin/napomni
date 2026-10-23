@@ -1,8 +1,10 @@
+mod support;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use napomni::reminders::{
     Application, Clock, CommandContext, CreateReminder, JsonStore, ScheduleInput, TimeSample,
 };
 use std::sync::{Arc, Mutex};
+use support::observed_toast_id;
 struct CalendarClock {
     now: Mutex<TimeSample>,
     offset: Mutex<i64>,
@@ -65,8 +67,9 @@ fn monthly_31_skips_short_months_and_continues_through_year_boundary() {
         .unwrap();
     clock.set("2027-01-31T09:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id).unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     clock.set("2027-02-28T09:00:00Z");
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
@@ -127,8 +130,9 @@ fn yearly_february_29_occurs_only_in_leap_years_and_invalid_dates_are_rejected()
     );
     clock.set("2028-02-29T09:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id).unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     assert_eq!(
         reminder
             .schedule
@@ -251,7 +255,8 @@ fn monthly_and_yearly_skip_dst_gaps_and_never_replay_either_fold_slot() {
         clock.set("2028-10-29T00:40:00Z");
         app.tick().unwrap();
         assert_eq!(app.open_toasts(), first);
-        app.close_toast(reminder.id).unwrap();
+        app.close_toast(observed_toast_id(&app, reminder.id))
+            .unwrap();
         clock.set("2028-10-29T01:05:00Z");
         let mut app = Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap();
         clock.set("2028-10-29T01:10:00Z");
@@ -315,7 +320,7 @@ fn calendar_rules_persist_skip_offline_dates_and_keep_multiple_local_slots_after
         clock.set("2028-01-15T07:00:00Z");
         app.tick().unwrap();
         let first = app.open_toasts().to_vec();
-        assert_eq!(first[0].reminder_id, reminder.id);
+        assert_eq!(first[0].reminder_id, Some(reminder.id));
         clock.set("2028-01-15T16:00:00Z");
         app.tick().unwrap();
         assert_eq!(app.open_toasts(), first);

@@ -1,8 +1,10 @@
+mod support;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use napomni::reminders::{
     Application, Clock, CommandContext, CreateReminder, JsonStore, ScheduleInput, TimeSample,
 };
 use std::sync::{Arc, Mutex};
+use support::observed_toast_id;
 
 struct TestClock(Mutex<TimeSample>, Mutex<i64>);
 impl TestClock {
@@ -106,9 +108,10 @@ fn one_shot_survives_restart_then_opens_a_snapshot_and_completes_offline() {
     clock.advance(10);
     app.tick().unwrap();
     assert!(app.reminders()[0].completed);
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
     assert_eq!(app.open_toasts()[0].text, "Ёжик пьёт чай");
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     assert!(app.open_toasts().is_empty());
     let app = Application::open(clock, Box::new(JsonStore::new(&path))).unwrap();
     assert!(app.reminders()[0].completed);

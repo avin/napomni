@@ -1,3 +1,4 @@
+mod support;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use napomni::{
     constraints::Constraints,
@@ -6,6 +7,7 @@ use napomni::{
     },
 };
 use std::sync::{Arc, Mutex};
+use support::observed_toast_id;
 struct TestClock(Mutex<TimeSample>);
 impl TestClock {
     fn new(at: &str) -> Self {
@@ -75,8 +77,9 @@ fn date_bounds_are_inclusive_and_end_does_not_close_the_existing_toast() {
     assert!(app.open_toasts().is_empty());
     clock.set("2026-10-20T00:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id).unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     clock.set("2026-10-21T23:30:00Z");
     app.tick().unwrap();
     let last = app.open_toasts().to_vec();
@@ -84,7 +87,8 @@ fn date_bounds_are_inclusive_and_end_does_not_close_the_existing_toast() {
     app.tick().unwrap();
     assert_eq!(app.open_toasts(), last);
     assert!(app.reminders()[0].completed);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     clock.set("2026-10-23T00:00:00Z");
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
@@ -134,12 +138,14 @@ fn half_hour_weekday_window_exclusion_and_restart_preserve_the_original_phase() 
     assert!(app.open_toasts().is_empty());
     clock.set("2026-10-29T09:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id).unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     clock.set("2026-10-29T18:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 1);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     for at in [
         "2026-10-29T18:00:01Z",
         "2026-10-30T09:00:00Z",
@@ -163,7 +169,7 @@ fn half_hour_weekday_window_exclusion_and_restart_preserve_the_original_phase() 
     );
     clock.set("2026-11-02T09:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
     let phase_limits = Constraints {
         window: Some(TimeWindow {
             start: "09:00:00".parse().unwrap(),
@@ -256,7 +262,7 @@ fn limits_filter_weekly_monthly_and_yearly_without_changing_their_calendar_phase
         );
         clock.set(&expected.replace("+00:00", "Z"));
         app.tick().unwrap();
-        assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+        assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
         if expected.starts_with("2026-10-19") {
             assert_eq!(
                 reminder

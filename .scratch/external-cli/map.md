@@ -10,6 +10,8 @@
 
 ## Decisions-so-far
 
+- [01](issues/01-independent-toast-identity.md): independent UUID card identity, optional reminder association and observed-card actions; legacy snooze compatibility and existing scheduling behavior covered by public core tests.
+
 ## Fog
 
 - Визуальные и звуковые результаты Windows отмечаются отдельно от проверок ядра и процессов.

@@ -264,7 +264,7 @@ fn waiting_for_failed_api_response_does_not_hold_core_or_stop_offline_schedule()
             .try_lock()
             .expect("network await must release application lock");
         core.tick().unwrap();
-        assert_eq!(core.open_toasts()[0].reminder_id, id);
+        assert_eq!(core.open_toasts()[0].reminder_id, Some(id));
     }
     release_sender.send(()).unwrap();
     let outcome = worker.join().unwrap();

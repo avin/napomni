@@ -9,7 +9,7 @@ use gpui::component::{
 use gpui::{prelude::*, *};
 use napomni::{
     placement::{Corner, Placement, Rect},
-    reminders::{ReminderId, ToastSnapshot},
+    reminders::{ToastId, ToastSnapshot},
 };
 
 use crate::{native, settings_ui::DesktopSettings};
@@ -68,7 +68,7 @@ pub fn show_demo(cx: &mut App) -> anyhow::Result<()> {
         ("Стакан воды. Небольшая пауза: налейте воды и отдохните от экрана.", 0x29a879),
         ("Проверка русского текста. Съешь ещё этих мягких французских булок, да выпей чаю. 0123456789", 0xb17bea),
     ].into_iter().enumerate().map(|(index, (text, border))| ToastSnapshot {
-        reminder_id: sequence + index as u64, text: text.into(), border, sound: false, sequence: sequence + index as u64,
+        id: uuid::Uuid::new_v4(), reminder_id: None, text: text.into(), border, sound: false, sequence: sequence + index as u64,
     }).collect();
     let handle = update(old, snapshots, Source::Demo, cx)?;
     cx.global_mut::<Stacks>().demo = handle;
@@ -207,7 +207,7 @@ impl Card {
 }
 
 struct Drag {
-    id: ReminderId,
+    id: ToastId,
     origin: f32,
     delta: f32,
 }
@@ -228,7 +228,7 @@ struct ToastStack {
     pulse_since: Instant,
     regions: Vec<Rect>,
     drag: Option<Drag>,
-    snooze_hover: Option<(ReminderId, Instant)>,
+    snooze_hover: Option<(ToastId, Instant)>,
 }
 
 impl ToastStack {
@@ -244,7 +244,7 @@ impl ToastStack {
         cx.on_release(|this, cx| {
             if this.source == Source::Live {
                 for toast in &this.snapshots {
-                    crate::reminder_ui::close(toast.reminder_id, cx);
+                    crate::reminder_ui::close(toast.id, cx);
                 }
             }
         })
@@ -277,11 +277,7 @@ impl ToastStack {
     fn accept(&mut self, snapshots: Vec<ToastSnapshot>) {
         let now = Instant::now();
         for card in &mut self.cards {
-            if !snapshots
-                .iter()
-                .any(|toast| toast.reminder_id == card.snapshot.reminder_id)
-                && !card.departing
-            {
+            if !snapshots.iter().any(|toast| toast.id == card.snapshot.id) && !card.departing {
                 card.departing = true;
                 let direction = if card.frame(now).x < card.target.x - 1. {
                     -1.
@@ -300,7 +296,7 @@ impl ToastStack {
         }
         for snapshot in &snapshots {
             if !self.cards.iter().any(|card| {
-                card.snapshot.reminder_id == snapshot.reminder_id
+                card.snapshot.id == snapshot.id
                     && card.snapshot.sequence == snapshot.sequence
                     && !card.departing
             }) {
@@ -319,7 +315,7 @@ impl ToastStack {
         }
         if self
             .snooze_hover
-            .is_some_and(|(id, _)| !snapshots.iter().any(|s| s.reminder_id == id))
+            .is_some_and(|(id, _)| !snapshots.iter().any(|s| s.id == id))
         {
             self.snooze_hover = None;
         }
@@ -390,7 +386,7 @@ impl ToastStack {
             cx.notify();
         }
     }
-    fn dismiss(&mut self, id: ReminderId, cx: &mut Context<Self>) {
+    fn dismiss(&mut self, id: ToastId, cx: &mut Context<Self>) {
         if self.source == Source::Live && !crate::reminder_ui::close(id, cx) {
             self.drag = None;
             cx.notify();
@@ -399,21 +395,21 @@ impl ToastStack {
         let snapshots = self
             .snapshots
             .iter()
-            .filter(|toast| toast.reminder_id != id)
+            .filter(|toast| toast.id != id)
             .cloned()
             .collect();
         self.accept(snapshots);
         self.drag = None;
         cx.notify();
     }
-    fn snooze(&mut self, id: ReminderId, cx: &mut Context<Self>) {
+    fn snooze(&mut self, id: ToastId, cx: &mut Context<Self>) {
         if self.source != Source::Live || !crate::reminder_ui::snooze(id, cx) {
             return;
         }
         let snapshots = self
             .snapshots
             .iter()
-            .filter(|toast| toast.reminder_id != id)
+            .filter(|toast| toast.id != id)
             .cloned()
             .collect();
         self.accept(snapshots);
@@ -426,7 +422,7 @@ impl ToastStack {
             if let Some(card) = self
                 .cards
                 .iter_mut()
-                .find(|card| card.snapshot.reminder_id == drag.id && !card.departing)
+                .find(|card| card.snapshot.id == drag.id && !card.departing)
             {
                 card.start = card.frame(now);
                 card.start.x += drag.delta;
@@ -483,12 +479,12 @@ impl ToastStack {
             }
             "space" => {
                 if let Some(toast) = self.snapshots.get(self.selected) {
-                    self.snooze(toast.reminder_id, cx);
+                    self.snooze(toast.id, cx);
                 }
             }
             "enter" | "backspace" | "delete" => {
                 if let Some(toast) = self.snapshots.get(self.selected) {
-                    self.dismiss(toast.reminder_id, cx);
+                    self.dismiss(toast.id, cx);
                 }
             }
             _ => return,
@@ -503,7 +499,7 @@ impl ToastStack {
             let card_height = self
                 .cards
                 .iter()
-                .find(|c| c.snapshot.reminder_id == toast.reminder_id && !c.departing)
+                .find(|c| c.snapshot.id == toast.id && !c.departing)
                 .map_or(100., |c| c.height);
             if index == self.selected {
                 if offset < self.scroll {
@@ -579,7 +575,7 @@ impl Render for ToastStack {
             .filter_map(|toast| {
                 self.cards
                     .iter()
-                    .find(|c| c.snapshot.reminder_id == toast.reminder_id && !c.departing)
+                    .find(|c| c.snapshot.id == toast.id && !c.departing)
             })
             .map(|c| c.height + GAP)
             .sum::<f32>()
@@ -591,7 +587,7 @@ impl Render for ToastStack {
             .and_then(|toast| {
                 self.cards
                     .iter()
-                    .find(|c| c.snapshot.reminder_id == toast.reminder_id && !c.departing)
+                    .find(|c| c.snapshot.id == toast.id && !c.departing)
             })
             .map_or(CARD_CHROME + LINE_HEIGHT, |c| c.height);
         let mut offset = 0.;
@@ -599,7 +595,7 @@ impl Render for ToastStack {
             if let Some(card) = self
                 .cards
                 .iter_mut()
-                .find(|card| card.snapshot.reminder_id == snapshot.reminder_id && !card.departing)
+                .find(|card| card.snapshot.id == snapshot.id && !card.departing)
             {
                 let compact_scale = 1. - index.min(2) as f32 * 0.055;
                 let card_width = if self.expanded {
@@ -675,14 +671,14 @@ impl Render for ToastStack {
             }
             self.snapshots
                 .iter()
-                .position(|toast| toast.reminder_id == self.cards[*i].snapshot.reminder_id)
+                .position(|toast| toast.id == self.cards[*i].snapshot.id)
                 .unwrap_or(0)
         });
         for index in order.into_iter().rev() {
             let card = &self.cards[index];
             let mut frame = card.frame(now);
             if let Some(drag) = &self.drag
-                && drag.id == card.snapshot.reminder_id
+                && drag.id == card.snapshot.id
             {
                 frame.x += drag.delta;
                 frame.opacity *= (1. - drag.delta.abs() / width).max(0.2);
@@ -704,13 +700,13 @@ impl Render for ToastStack {
                 width: ((right * scale).ceil() - (left * scale).floor()) as i32,
                 height: ((bottom * scale).ceil() - (top * scale).floor()) as i32,
             });
-            let id = card.snapshot.reminder_id;
+            let id = card.snapshot.id;
             let departing = card.departing;
             let selected = self.keyboard
                 && self
                     .snapshots
                     .get(self.selected)
-                    .is_some_and(|s| s.reminder_id == id);
+                    .is_some_and(|s| s.id == id);
             let content_opacity = frame.content.clamp(0., 1.);
             let ring_phase = now.duration_since(card.ring_since).as_secs_f32() % 2.;
             // Vary the swing speed slightly without pausing or fading it out.
@@ -746,7 +742,7 @@ impl Render for ToastStack {
                 )
                 .child(
                     div()
-                        .id(("snooze-trigger", id))
+                        .id(SharedString::from(format!("snooze-trigger-{id}")))
                         .absolute()
                         .right(px(SNOOZE_RIGHT - BORDER_WIDTH))
                         .top(px(snooze_top - BORDER_WIDTH))
@@ -763,7 +759,7 @@ impl Render for ToastStack {
                         }))
                         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                         .child(
-                            Button::new(("snooze-toast", id))
+                            Button::new(SharedString::from(format!("snooze-toast-{id}")))
                                 .child(
                                     Icon::new(IconName::Moon)
                                         .with_size(px(14.))
@@ -793,7 +789,7 @@ impl Render for ToastStack {
                         .right(px(14. - BORDER_WIDTH))
                         .top(px(close_top - BORDER_WIDTH))
                         .child(
-                            Button::new(("close-toast", id))
+                            Button::new(SharedString::from(format!("close-toast-{id}")))
                                 .icon(IconName::Close)
                                 .accessibility_label("Закрыть напоминание")
                                 .ghost()
