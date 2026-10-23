@@ -10,6 +10,8 @@
 
 ## Decisions-so-far
 
+- [06](issues/06-install-agent-skill.md): main Settings installs bundled English skill under chosen root; generated UTF8 CLI-path resource handles spaces; filesystem/real CLI resource checks and format validator passed. Independent skill forward test and installed Windows UI acceptance remain pending.
+
 - [05](issues/05-immediate-snooze-recovery.md): independent pending snapshots retain absolute deadlines and survive restart/undo; five new core scenarios plus existing snooze/after-close/mutation suites passed (42 tests). Native button/restart and physical sound acceptance remain to be checked.
 
 - [04](issues/04-reminder-management.md): complete reminder CRUD/pause/resume/shared undo via existing tool dispatcher; inline/stdin JSON, exact tool-derived schemas, documented schedules; core and real CLI failure/restart checks passed.
