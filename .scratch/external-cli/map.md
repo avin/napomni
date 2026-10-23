@@ -10,6 +10,8 @@
 
 ## Decisions-so-far
 
+- [05](issues/05-immediate-snooze-recovery.md): independent pending snapshots retain absolute deadlines and survive restart/undo; five new core scenarios plus existing snooze/after-close/mutation suites passed (42 tests). Native button/restart and physical sound acceptance remain to be checked.
+
 - [04](issues/04-reminder-management.md): complete reminder CRUD/pause/resume/shared undo via existing tool dispatcher; inline/stdin JSON, exact tool-derived schemas, documented schedules; core and real CLI failure/restart checks passed.
 
 - [03](issues/03-immediate-notifications.md): `notify <text>` creates an independent ephemeral card through the shared handler and native stack; exact CLI text transport and real native cold-launch visibility/focus verified. Physical audibility remains an integration check.

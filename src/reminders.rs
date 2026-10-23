@@ -557,14 +557,15 @@ impl Application {
         let Some(snapshot) = self.toasts.iter().find(|t| t.id == id).cloned() else {
             return Ok(());
         };
-        let reminder_id = snapshot.reminder_id.context("Toast has no reminder")?;
-        let reminder = self
-            .state
-            .reminders
-            .iter()
-            .find(|r| r.id == reminder_id)
-            .context("Напоминание удалено")?;
-        ensure!(!reminder.paused, "Напоминание на паузе");
+        if let Some(reminder_id) = snapshot.reminder_id {
+            let reminder = self
+                .state
+                .reminders
+                .iter()
+                .find(|r| r.id == reminder_id)
+                .context("Напоминание удалено")?;
+            ensure!(!reminder.paused, "Напоминание на паузе");
+        }
         let now = self.clock.sample().utc;
         let at = now
             .checked_add_signed(Duration::minutes(i64::from(minutes)))
@@ -715,7 +716,17 @@ impl Application {
         let mut snapshots = Vec::new();
         next.snoozed.retain(|snoozed| {
             let Some(id) = snoozed.snapshot.reminder_id else {
-                return false;
+                if snoozed.at <= now {
+                    if !self
+                        .toasts
+                        .iter()
+                        .any(|toast| toast.id == snoozed.snapshot.id)
+                    {
+                        snapshots.push(snoozed.snapshot.clone());
+                    }
+                    return false;
+                }
+                return true;
             };
             let Some(reminder) = next.reminders.iter().find(|r| r.id == id) else {
                 return false;

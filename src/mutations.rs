@@ -202,9 +202,11 @@ impl Application {
             next.reminders.retain(|r| r.id != undo.id);
         }
         next.snoozed.retain(|s| {
-            next.reminders
-                .iter()
-                .any(|r| Some(r.id) == s.snapshot.reminder_id && !r.paused)
+            s.snapshot.reminder_id.is_none()
+                || next
+                    .reminders
+                    .iter()
+                    .any(|r| Some(r.id) == s.snapshot.reminder_id && !r.paused)
         });
         next.undo = None;
         self.skip_calendar_through_now(&mut next, undo.id);
