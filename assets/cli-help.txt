@@ -13,8 +13,11 @@ Usage:
 
 Pass one JSON object as a single argument, or '-' to read UTF-8 JSON from stdin.
 PowerShell example (the call operator supports paths containing spaces):
+  $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+  [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
   $json = '{"text":"Drink water","schedule":{"kind":"after_seconds","seconds":3600}}'
   $json | & 'C:\path with spaces\napomni-cli.exe' create -
+Keep these UTF-8 settings for native stdin/JSON output, especially PowerShell 5.
 
 Commands and JSON objects:
   notify  Text as one argument. Show one independent notification for each call,

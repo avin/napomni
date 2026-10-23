@@ -41,6 +41,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Source: "{#AppBinary}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#CliBinary}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
+Source: "assets\agent-skill\napomni\SKILL.md"; DestDir: "{app}\resources\agent-skill\napomni"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Napomni"; Filename: "{app}\napomni.exe"; Parameters: "--open"
