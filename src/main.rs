@@ -94,7 +94,10 @@ fn main() {
             }
             return;
         }
-        Err(error) => { eprintln!("Cannot claim application ownership: {error:#}"); return; }
+        Err(error) => {
+            eprintln!("Cannot claim application ownership: {error:#}");
+            return;
+        }
     };
     gpui::application()
         .with_assets(gpui::assets::AllAssets)

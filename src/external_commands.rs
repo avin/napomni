@@ -1,5 +1,8 @@
 //! Local commands use the same application and history as the internal chat.
-use crate::{reminder_tools::execute_tool, reminders::{Application, CommandContext}};
+use crate::{
+    reminder_tools::execute_tool,
+    reminders::{Application, CommandContext},
+};
 use anyhow::{Result, bail};
 use serde_json::Value;
 
