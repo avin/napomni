@@ -13,5 +13,6 @@ pub mod mutations;
 pub mod placement;
 pub mod reminder_tools;
 pub mod reminders;
+pub mod skill_install;
 pub mod sound;
 pub mod weekly;

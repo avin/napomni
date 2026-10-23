@@ -69,6 +69,7 @@ pub struct MainWindow {
     api_key: Entity<InputState>,
     model: Entity<InputState>,
     snooze_minutes: Entity<InputState>,
+    skills_root: Entity<InputState>,
     pub status: String,
     pub busy: bool,
     verified_connection: Option<Connection>,
@@ -170,6 +171,13 @@ impl MainWindow {
         })
         .detach();
         let history_scroll = ScrollHandle::new();
+        let skills_root = cx.new(|cx| {
+            InputState::new(window, cx).default_value(
+                napomni::skill_install::default_root()
+                    .map(|path| path.to_string_lossy().into_owned())
+                    .unwrap_or_default(),
+            )
+        });
         history_scroll.scroll_to_bottom();
         Self {
             session,
@@ -178,6 +186,7 @@ impl MainWindow {
             api_key,
             model,
             snooze_minutes,
+            skills_root,
             status,
             busy: false,
             verified_connection: None,
@@ -610,6 +619,39 @@ impl MainWindow {
                                             v.request(true, window, cx)
                                         })),
                                 ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .p_4()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(t.border)
+                            .bg(t.background)
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child("Интеграция с агентами"))
+                            .child(field("Папка скиллов", Input::new(&self.skills_root)))
+                            .child(
+                                div().text_sm().text_color(t.muted_foreground)
+                                    .child("Английская инструкция для уведомлений и управления напоминаниями через CLI."),
+                            )
+                            .child(
+                                Button::new("install-skill")
+                                    .label("Установить скилл")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let root = this.skills_root.read(cx).value().to_string();
+                                        let result = (|| -> anyhow::Result<std::path::PathBuf> {
+                                            let cli = std::env::current_exe()?.with_file_name("napomni-cli.exe");
+                                            napomni::skill_install::install(std::path::Path::new(&root), &cli)
+                                        })();
+                                        this.status = match result {
+                                            Ok(path) => format!("Скилл установлен: {}", path.display()),
+                                            Err(error) => format!("Не удалось установить скилл: {error:#}"),
+                                        };
+                                        cx.notify();
+                                    })),
                             ),
                     )
                     .child(
