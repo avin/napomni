@@ -38,6 +38,16 @@ pub fn schemas() -> Value {
 pub fn execute(app: &mut Application, command: &str, arguments: &Value) -> Result<Value> {
     let context = CommandContext::capture(app.clock(), "external", None);
     match command {
+        "notify" => {
+            #[derive(serde::Deserialize)]
+            #[serde(deny_unknown_fields)]
+            struct Notification {
+                text: String,
+            }
+            let notification: Notification = serde_json::from_value(arguments.clone())?;
+            app.notify(notification.text)?;
+            Ok(serde_json::json!({"ok":true}))
+        }
         "list" => execute_tool(app, "list_reminders", &arguments.to_string(), &context),
         "create" => execute_tool(app, "create_reminder", &arguments.to_string(), &context),
         "update" => execute_tool(app, "update_reminder", &arguments.to_string(), &context),

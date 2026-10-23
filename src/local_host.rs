@@ -259,6 +259,7 @@ pub fn run_cli(args: Vec<String>) -> Result<()> {
         return Ok(());
     }
     let arguments = match args[0].as_str() {
+        "notify" if args.len() == 2 => json!({"text":args[1]}),
         "list" | "undo" => {
             ensure!(args.len() == 1, "This command takes no arguments");
             json!({})

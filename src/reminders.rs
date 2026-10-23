@@ -528,6 +528,22 @@ impl Application {
     pub fn open_toasts(&self) -> &[ToastSnapshot] {
         &self.toasts
     }
+    /// Show an independent, ephemeral card without changing reminders or undo.
+    pub fn notify(&mut self, text: String) -> Result<()> {
+        ensure!(
+            !text.trim().is_empty(),
+            "Notification text must not be empty"
+        );
+        self.show_snapshots(vec![ToastSnapshot {
+            id: uuid::Uuid::new_v4(),
+            reminder_id: None,
+            text,
+            border: 0x5285f5,
+            sound: true,
+            sequence: 0,
+        }]);
+        Ok(())
+    }
     pub fn signal_active(&self) -> bool {
         self.toasts.iter().any(|t| t.sound)
     }

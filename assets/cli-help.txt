@@ -2,6 +2,7 @@ Napomni CLI
 
 Usage:
   napomni-cli list
+  napomni-cli notify <text>
   napomni-cli create JSON|-
   napomni-cli update JSON|-
   napomni-cli pause JSON|-
@@ -16,6 +17,10 @@ PowerShell example (the call operator supports paths containing spaces):
   $json | & 'C:\path with spaces\napomni-cli.exe' create -
 
 Commands and JSON objects:
+  notify  Text as one argument. Show one independent notification for each call,
+          even for identical text. Standard blue border and sound. Unicode and
+          newlines are preserved. Returns success/error without waiting for
+          closure or exposing a notification ID. No saved reminder is created.
   list    No arguments. All saved reminders, including chat-created records.
   create  {"text":"...","schedule":{...},"border":255,"sound":true}
           border (RGB integer 0..16777215) and sound are optional; defaults blue/true.
