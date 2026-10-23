@@ -4322,6 +4322,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "napomni"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-openai",
+ "chrono",
+ "embed-resource",
+ "gpui-kit",
+ "raw-window-handle",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tray-icon",
+ "uuid",
+ "windows 0.61.3",
+]
+
+[[package]]
 name = "native-tls"
 version = "0.2.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8116,26 +8136,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bae2f2b2b816647a1cab1acc91f5bd20812d53cb344382635ec2181940c8034f"
 dependencies = [
  "libc",
-]
-
-[[package]]
-name = "napomni"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-openai",
- "chrono",
- "embed-resource",
- "gpui-kit",
- "raw-window-handle",
- "reqwest",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tray-icon",
- "uuid",
- "windows 0.61.3",
 ]
 
 [[package]]
