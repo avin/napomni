@@ -248,15 +248,16 @@ fn launch_app() -> Result<()> {
 pub fn run_cli(args: Vec<String>) -> Result<()> {
     if args.is_empty() || matches!(args[0].as_str(), "--help" | "-h" | "help") {
         println!(
-            "Napomni CLI\n\nUsage: napomni-cli list\n\nlist  Return JSON with all saved reminders (stable IDs, schedule descriptions and statuses).\n\nConnects to the current Windows user's local app; starts it in the background if needed.\nSuccess is reported only after the application's result. Errors go to stderr with exit code 1."
+            "Napomni CLI\n\nUsage: napomni-cli list\n       napomni-cli notify <text>\n\nnotify  Show one independent notification (blue border, sound) for each call, even with identical text. Quote text as one argument; Unicode and newlines are preserved. Returns success/error without waiting for closure.\n\nlist  Return JSON with all saved reminders (stable IDs, schedule descriptions and statuses).\n\nConnects to the current Windows user's local app; starts it in the background if needed.\nSuccess is reported only after the application's result. Errors go to stderr with exit code 1."
         );
         return Ok(());
     }
-    ensure!(
-        args[0] == "list" && args.len() == 1,
-        "Unknown command or arguments. Run napomni-cli --help"
-    );
-    let result = request(&args[0], json!({}), true)?;
+    let arguments = match args[0].as_str() {
+        "list" if args.len() == 1 => json!({}),
+        "notify" if args.len() == 2 => json!({"text":args[1]}),
+        _ => bail!("Unknown command or arguments. Run napomni-cli --help"),
+    };
+    let result = request(&args[0], arguments, true)?;
     if result["ok"] != true {
         bail!("{}", result["error"].as_str().unwrap_or("Command failed"));
     }

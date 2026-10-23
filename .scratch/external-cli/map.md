@@ -10,6 +10,8 @@
 
 ## Decisions-so-far
 
+- [03](issues/03-immediate-notifications.md): `notify <text>` creates an independent ephemeral card through the shared handler and native stack; exact CLI text transport and real native cold-launch visibility/focus verified. Physical audibility remains an integration check.
+
 - [02: Local CLI host](issues/02-local-cli-host.md): Windows owner-only named pipe, pre-load file lock, JSON list, bounded result acknowledgement, sibling executable discovery; real isolated CLI tests pass. Installer execution/foreground manual acceptance remains open.
 
 - [01](issues/01-independent-toast-identity.md): independent UUID card identity, optional reminder association and observed-card actions; legacy snooze compatibility and existing scheduling behavior covered by public core tests.
