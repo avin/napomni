@@ -1,3 +1,4 @@
+mod support;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use napomni::{
     reminder_tools::{execute_tool, tools},
@@ -8,6 +9,7 @@ use napomni::{
 };
 use serde_json::json;
 use std::sync::{Arc, Mutex};
+use support::observed_toast_id;
 
 struct TestClock(Mutex<TimeSample>);
 
@@ -102,7 +104,7 @@ fn first_occurrence_uses_actual_creation_and_close_starts_a_full_new_interval() 
     clock.advance(1);
     app.tick().unwrap();
     let snapshot = app.open_toasts()[0].clone();
-    assert_eq!(snapshot.reminder_id, reminder.id);
+    assert_eq!(snapshot.reminder_id, Some(reminder.id));
     assert_eq!(next(&app, reminder.id), None);
     assert_eq!(
         app.schedule_status(reminder.id).as_deref(),
@@ -110,20 +112,21 @@ fn first_occurrence_uses_actual_creation_and_close_starts_a_full_new_interval() 
     );
     clock.advance(1500);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts(), &[snapshot]);
+    assert_eq!(app.open_toasts(), &[snapshot.clone()]);
     assert!(!app.reminders()[0].completed);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     let expected = clock.sample().utc + Duration::minutes(10);
     assert_eq!(next(&app, reminder.id), Some(expected));
     clock.advance(120);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(snapshot.id).unwrap();
     assert_eq!(next(&app, reminder.id), Some(expected));
     clock.advance(479);
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
 }
 
 #[test]
@@ -155,7 +158,7 @@ fn future_explicit_start_and_invalid_periods_are_validated_before_saving() {
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
 }
 
 #[test]
@@ -185,7 +188,7 @@ fn waiting_state_survives_sleep_and_restart_restarts_without_a_phantom_toast() {
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
 }
 
 #[test]
@@ -199,7 +202,8 @@ fn close_persists_the_next_occurrence_and_restart_starts_a_full_interval() {
     clock.advance(600);
     app.tick().unwrap();
     clock.advance(300);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     drop(app);
     clock.advance(120);
     let mut app = Application::open(clock.clone(), Box::new(JsonStore::new(&path))).unwrap();
@@ -212,7 +216,7 @@ fn close_persists_the_next_occurrence_and_restart_starts_a_full_interval() {
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
 }
 
 #[test]
@@ -235,7 +239,8 @@ fn pausing_or_deleting_an_open_reminder_does_not_reopen_its_toast() {
             app.set_paused(reminder.id, true).unwrap();
         }
         assert_eq!(app.open_toasts().len(), 1);
-        app.close_toast(reminder.id).unwrap();
+        app.close_toast(observed_toast_id(&app, reminder.id))
+            .unwrap();
         clock.advance(1200);
         app.tick().unwrap();
         assert!(app.open_toasts().is_empty());
@@ -305,10 +310,10 @@ fn tools_expose_create_and_edit_for_the_opt_in_schedule_and_keep_plain_interval_
     ));
     assert_eq!(app.open_toasts(), &[snapshot]);
     clock.advance(120);
-    app.close_toast(id).unwrap();
+    app.close_toast(observed_toast_id(&app, id)).unwrap();
     clock.advance(480);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(id));
     let reopened = Application::open(clock, Box::new(JsonStore::new(&path))).unwrap();
     assert!(matches!(
         reopened.reminders()[0].schedule,
@@ -342,7 +347,8 @@ fn constrained_occurrences_filter_the_new_phase_anchored_at_closure() {
     clock.advance(600);
     app.tick().unwrap();
     clock.advance(420); // Closed at local 12:17; new phase starts at 12:27.
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     assert_eq!(
         app.reminders()[0]
             .schedule
@@ -357,7 +363,7 @@ fn constrained_occurrences_filter_the_new_phase_anchored_at_closure() {
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
 }
 
 #[test]
@@ -402,7 +408,8 @@ fn editing_only_limits_while_waiting_preserves_waiting_until_close() {
     );
     assert!(!app.reminders()[0].completed);
     clock.advance(300);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     assert_eq!(
         app.reminders()[0]
             .schedule
@@ -445,12 +452,16 @@ fn failed_close_save_preserves_the_open_toast_and_waiting_state_until_retry() {
     app.tick().unwrap();
     let snapshot = app.open_toasts()[0].clone();
     fail.store(true, Ordering::SeqCst);
-    assert!(app.close_toast(reminder.id).is_err());
+    assert!(
+        app.close_toast(observed_toast_id(&app, reminder.id))
+            .is_err()
+    );
     assert_eq!(app.open_toasts(), &[snapshot]);
     assert_eq!(next(&app, reminder.id), None);
     clock.advance(120);
     fail.store(false, Ordering::SeqCst);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     assert!(app.open_toasts().is_empty());
     assert_eq!(
         next(&app, reminder.id),
@@ -482,7 +493,8 @@ fn undoing_a_property_edit_after_close_keeps_the_new_deadline() {
     )
     .unwrap();
     clock.advance(180);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     let expected = clock.sample().utc + Duration::minutes(10);
     clock.advance(120);
     app.undo().unwrap();
@@ -493,7 +505,7 @@ fn undoing_a_property_edit_after_close_keeps_the_new_deadline() {
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
 }
 
 #[test]
@@ -508,9 +520,11 @@ fn startup_restarts_every_after_close_interval_even_with_a_future_or_snoozed_dea
         clock.advance(600);
         app.tick().unwrap();
         if snooze {
-            app.snooze_toast(reminder.id, 5).unwrap();
+            app.snooze_toast(observed_toast_id(&app, reminder.id), 5)
+                .unwrap();
         } else {
-            app.close_toast(reminder.id).unwrap();
+            app.close_toast(observed_toast_id(&app, reminder.id))
+                .unwrap();
         }
         drop(app);
         clock.advance(elapsed);
@@ -535,7 +549,7 @@ fn startup_restarts_every_after_close_interval_even_with_a_future_or_snoozed_dea
         assert!(app.open_toasts().is_empty());
         clock.advance(1);
         app.tick().unwrap();
-        assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+        assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
     }
 }
 
@@ -565,7 +579,7 @@ fn resuming_an_overdue_paused_after_close_interval_restarts_instead_of_leaving_a
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(id));
 }
 
 #[test]
@@ -585,7 +599,7 @@ fn a_due_unprocessed_after_close_occurrence_is_reported_as_waiting_for_display()
         Some("Ожидает показа уведомления")
     );
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(id));
     assert_eq!(
         app.schedule_status(id).as_deref(),
         Some("Ожидает закрытия уведомления")

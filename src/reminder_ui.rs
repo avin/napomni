@@ -1,7 +1,7 @@
 use gpui::{App, Global};
 use napomni::{
     chat::ChatSession,
-    reminders::{Application, JsonStore, Reminder, ReminderId, SystemClock, ToastSnapshot},
+    reminders::{Application, JsonStore, Reminder, SystemClock, ToastId, ToastSnapshot},
     sound::NativeSignal,
 };
 use std::sync::{Arc, Mutex};
@@ -31,7 +31,7 @@ pub fn initialize(cx: &mut App) -> anyhow::Result<()> {
     });
     Ok(())
 }
-pub fn close(id: ReminderId, cx: &mut App) -> bool {
+pub fn close(id: ToastId, cx: &mut App) -> bool {
     let active = if let Ok(mut app) = cx.global::<Reminders>().app.lock() {
         if let Err(error) = app.close_toast(id) {
             eprintln!("{error:#}");
@@ -46,7 +46,7 @@ pub fn close(id: ReminderId, cx: &mut App) -> bool {
     }
     true
 }
-pub fn snooze(id: ReminderId, cx: &mut App) -> bool {
+pub fn snooze(id: ToastId, cx: &mut App) -> bool {
     let minutes = cx
         .global::<crate::settings_ui::DesktopSettings>()
         .0
@@ -68,11 +68,7 @@ pub fn snooze(id: ReminderId, cx: &mut App) -> bool {
 }
 pub fn shutdown(cx: &mut App) {
     if let Ok(mut app) = cx.global::<Reminders>().app.lock() {
-        let ids = app
-            .open_toasts()
-            .iter()
-            .map(|t| t.reminder_id)
-            .collect::<Vec<_>>();
+        let ids = app.open_toasts().iter().map(|t| t.id).collect::<Vec<_>>();
         for id in ids {
             if let Err(error) = app.close_toast(id) {
                 eprintln!("{error:#}");

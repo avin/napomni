@@ -1,3 +1,4 @@
+mod support;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use napomni::{
     mutations::ReminderPatch,
@@ -6,6 +7,7 @@ use napomni::{
     },
 };
 use std::sync::{Arc, Mutex};
+use support::observed_toast_id;
 struct TestClock(Mutex<TimeSample>);
 impl TestClock {
     fn new() -> Self {
@@ -114,7 +116,7 @@ fn edit_pause_delete_and_undo_preserve_the_open_toast_snapshot() {
     assert_eq!(app.reminders()[0].id, id);
     assert!(app.reminders()[0].paused);
     assert_eq!(app.open_toasts(), &[snapshot]);
-    app.close_toast(id).unwrap();
+    app.close_toast(observed_toast_id(&app, id)).unwrap();
     assert!(!app.signal_active());
     assert!(!app.can_undo());
     app.tick().unwrap();
@@ -156,7 +158,7 @@ fn undo_covers_creation_edit_and_pause_and_restores_deleted_id_after_restart() {
     assert!(!app.can_undo());
     clock.advance(60);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(id));
 }
 
 #[test]
@@ -187,7 +189,7 @@ fn pause_resume_and_late_undo_skip_missed_occurrences_without_skipping_other_rec
     clock.advance(30);
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 1);
-    assert_eq!(app.open_toasts()[0].reminder_id, other);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(other));
 }
 
 #[test]
@@ -289,26 +291,26 @@ fn recurring_resume_and_undo_skip_elapsed_grid_points_only_for_the_affected_reco
     )
     .unwrap();
     assert_eq!(app.open_toasts(), &[snapshot]);
-    app.close_toast(id).unwrap();
+    app.close_toast(observed_toast_id(&app, id)).unwrap();
     clock.advance(75);
     app.set_paused(id, true).unwrap();
     app.undo().unwrap();
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 1);
-    assert_eq!(app.open_toasts()[0].reminder_id, other);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(other));
     clock.advance(45);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(id));
     assert!(!app.open_toasts()[0].sound);
     app.delete(id).unwrap();
-    app.close_toast(id).unwrap();
+    app.close_toast(observed_toast_id(&app, id)).unwrap();
     clock.advance(70);
     app.undo().unwrap();
     app.tick().unwrap();
-    assert!(app.open_toasts().iter().all(|t| t.reminder_id != id));
+    assert!(app.open_toasts().iter().all(|t| t.reminder_id != Some(id)));
     clock.advance(50);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(id));
 }
 
 #[test]
@@ -323,7 +325,7 @@ fn editing_time_after_clock_rollback_allows_the_new_future_deadline() {
     let id = create(&mut app, clock.as_ref(), 60);
     clock.advance(60);
     app.tick().unwrap();
-    app.close_toast(id).unwrap();
+    app.close_toast(observed_toast_id(&app, id)).unwrap();
     clock.0.lock().unwrap().utc -= Duration::seconds(60);
     app.tick().unwrap();
     app.update(
@@ -373,7 +375,7 @@ fn undo_of_calendar_property_edit_keeps_occurrences_consumed_since_the_edit() {
         clock.advance(60);
         app.tick().unwrap();
         assert_eq!(app.open_toasts().len(), 1);
-        app.close_toast(id).unwrap();
+        app.close_toast(observed_toast_id(&app, id)).unwrap();
     }
     app.undo().unwrap();
     assert!(app.reminders()[0].sound);

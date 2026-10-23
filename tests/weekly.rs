@@ -1,8 +1,10 @@
+mod support;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use napomni::reminders::{
     Application, Clock, CommandContext, CreateReminder, JsonStore, TimeSample,
 };
 use std::sync::{Arc, Mutex};
+use support::observed_toast_id;
 
 struct TestClock(Mutex<TimeSample>);
 impl TestClock {
@@ -56,13 +58,15 @@ fn weekly_selected_days_and_multiple_times_open_future_toasts_after_each_close()
     );
     clock.advance_to("2026-10-19T09:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
-    app.close_toast(reminder.id).unwrap();
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     clock.advance_to("2026-10-19T10:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
     assert!(!app.reminders()[0].completed);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     clock.advance_to("2026-10-20T10:00:00Z");
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
@@ -85,13 +89,14 @@ fn two_week_phase_uses_mondays_across_year_and_survives_restart_without_catchup(
     let reminder = app.create(input(serde_json::json!({"kind":"weekly", "weekdays":[2,4], "times":["09:00:00"], "every_n_weeks":2,"anchor_monday":"2026-12-28"})), &context).unwrap();
     clock.advance_to("2026-12-29T09:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
     // Keep the snapshot open: the second occurrence must not move it or replay entry.
     let snapshot = app.open_toasts().to_vec();
     clock.advance_to("2026-12-31T09:00:00Z");
     app.tick().unwrap();
     assert_eq!(app.open_toasts(), snapshot);
-    app.close_toast(reminder.id).unwrap();
+    app.close_toast(observed_toast_id(&app, reminder.id))
+        .unwrap();
     clock.advance_to("2027-01-05T09:00:00Z");
     app.tick().unwrap();
     assert!(app.open_toasts().is_empty());
@@ -109,7 +114,7 @@ fn two_week_phase_uses_mondays_across_year_and_survives_restart_without_catchup(
     );
     clock.advance_to("2027-01-14T09:00:00Z");
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
 }
 
 #[test]
@@ -220,7 +225,8 @@ fn autumn_fold_does_not_repeat_either_of_two_local_slots_even_after_restart() {
         clock.advance_to(instant);
         app.tick().unwrap();
         assert_eq!(app.open_toasts().len(), 1);
-        app.close_toast(reminder.id).unwrap();
+        app.close_toast(observed_toast_id(&app, reminder.id))
+            .unwrap();
     }
     drop(app);
     clock.advance_to("2026-10-25T01:00:00Z");
@@ -273,7 +279,8 @@ fn manual_clock_rollback_does_not_replay_two_consumed_local_slots_after_restart(
         clock.advance_to(instant);
         app.tick().unwrap();
         assert_eq!(app.open_toasts().len(), 1);
-        app.close_toast(reminder.id).unwrap();
+        app.close_toast(observed_toast_id(&app, reminder.id))
+            .unwrap();
     }
     clock.advance_to("2026-10-19T08:30:00Z");
     app.tick().unwrap();

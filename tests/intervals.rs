@@ -1,8 +1,10 @@
+mod support;
 use chrono::{DateTime, Duration, NaiveDateTime, Utc};
 use napomni::reminders::{
     Application, Clock, CommandContext, CreateReminder, JsonStore, ScheduleInput, TimeSample,
 };
 use std::sync::{Arc, Mutex};
+use support::observed_toast_id;
 struct TestClock {
     now: Mutex<TimeSample>,
     offset: Mutex<i64>,
@@ -78,7 +80,7 @@ fn interval_anchors_at_actual_creation_and_keeps_its_grid() {
     assert!(app.open_toasts().is_empty());
     clock.advance(1);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
     assert!(!app.reminders()[0].completed);
     assert_eq!(
         app.reminders()[0]
@@ -114,17 +116,17 @@ fn open_repeat_is_unchanged_and_close_consumes_missed_repeat_only_for_its_id() {
         )
         .unwrap();
     clock.advance(660);
-    app.close_toast(first.id).unwrap();
+    app.close_toast(observed_toast_id(&app, first.id)).unwrap();
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 1);
-    assert_eq!(app.open_toasts()[0].reminder_id, second.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(second.id));
     clock.advance(539);
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 1);
     clock.advance(1);
     app.tick().unwrap();
     assert_eq!(app.open_toasts().len(), 2);
-    assert_eq!(app.open_toasts()[0].reminder_id, first.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(first.id));
     assert_eq!(app.open_toasts()[0].text, app.open_toasts()[1].text);
 }
 #[test]
@@ -141,7 +143,8 @@ fn sleep_restart_and_timezone_changes_skip_missed_occurrences_and_preserve_phase
         app.tick().unwrap();
         assert_eq!(app.open_toasts().len(), 1);
         if sleep {
-            app.close_toast(reminder.id).unwrap();
+            app.close_toast(observed_toast_id(&app, reminder.id))
+                .unwrap();
             clock.now.lock().unwrap().utc += Duration::minutes(35);
             app.tick().unwrap();
         } else {
@@ -164,7 +167,7 @@ fn sleep_restart_and_timezone_changes_skip_missed_occurrences_and_preserve_phase
         assert!(app.open_toasts().is_empty());
         clock.advance(1);
         app.tick().unwrap();
-        assert_eq!(app.open_toasts()[0].reminder_id, reminder.id);
+        assert_eq!(app.open_toasts()[0].reminder_id, Some(reminder.id));
         assert_eq!(app.reminders()[0].schedule, reminder.schedule);
     }
 }
@@ -199,10 +202,10 @@ fn explicit_starts_keep_grid_while_invalid_intervals_leave_data_unchanged() {
     assert_eq!(app.reminders().len(), 2);
     clock.advance(420);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, past.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(past.id));
     clock.advance(300);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts()[0].reminder_id, future.id);
+    assert_eq!(app.open_toasts()[0].reminder_id, Some(future.id));
 }
 
 #[test]
