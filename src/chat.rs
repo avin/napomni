@@ -48,6 +48,9 @@ pub struct ChatSession {
 }
 impl ChatSession {
     pub fn default_directory() -> PathBuf {
+        if let Some(directory) = std::env::var_os("NAPOMNI_DATA_DIR") {
+            return PathBuf::from(directory);
+        }
         std::env::var_os("APPDATA")
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))

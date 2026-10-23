@@ -86,6 +86,16 @@ impl gpui::Render for ErrorView {
 fn main() {
     let demo = std::env::args().any(|arg| arg == "--test-toasts");
     let show_main = std::env::args().any(|arg| arg == "--open");
+    let _owner = match napomni::local_host::claim_owner() {
+        Ok(Some(owner)) => owner,
+        Ok(None) => {
+            if show_main {
+                let _ = napomni::local_host::request("open", serde_json::json!({}), false);
+            }
+            return;
+        }
+        Err(error) => { eprintln!("Cannot claim application ownership: {error:#}"); return; }
+    };
     gpui::application()
         .with_assets(gpui::assets::AllAssets)
         .run(move |cx: &mut App| {
@@ -94,6 +104,7 @@ fn main() {
             let result = (|| -> Result<()> {
                 settings_ui::initialize(cx)?;
                 reminder_ui::initialize(cx)?;
+                let commands = napomni::local_host::serve()?;
                 let tray = tray()?;
                 let mut main_view = None;
                 let main = cx.open_window(
@@ -132,12 +143,32 @@ fn main() {
                     main,
                     view: main_view.unwrap(),
                 });
-                cx.spawn(async |cx| {
+                cx.spawn(async move |cx| {
                     loop {
                         cx.background_executor()
                             .timer(Duration::from_millis(40))
                             .await;
                         if cx.update(|cx| {
+                            while let Ok(pending) = commands.try_recv() {
+                                let result = if pending.request.command == "open" {
+                                    open_main(cx);
+                                    Ok(serde_json::json!({"ok":true}))
+                                } else {
+                                    let result = cx.global::<reminder_ui::Reminders>().app.lock()
+                                        .map_err(|_| anyhow::anyhow!("Reminder application unavailable"))
+                                        .and_then(|mut app| napomni::external_commands::execute(&mut app, &pending.request.command, &pending.request.arguments));
+                                    // Reply after the native adapter has reconciled toast windows.
+                                    result.and_then(|result| reminder_ui::poll(cx).map(|changed| {
+                                        if changed {
+                                            let view = cx.global::<Desktop>().view.clone();
+                                            view.update(cx, |_, cx| cx.notify());
+                                        }
+                                        result
+                                    }))
+                                };
+                                let response = result.unwrap_or_else(|error| serde_json::json!({"ok":false,"error":format!("{error:#}")}));
+                                let _ = pending.reply.send(response);
+                            }
                             match reminder_ui::poll(cx) {
                                 Ok(true) => {
                                     let view = cx.global::<Desktop>().view.clone();

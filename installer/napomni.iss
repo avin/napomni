@@ -1,6 +1,9 @@
 #ifndef AppVersion
   #error AppVersion must be supplied with /DAppVersion=1.2.3
 #endif
+#ifndef CliBinary
+  #define CliBinary "target\x86_64-pc-windows-msvc\release\napomni-cli.exe"
+#endif
 #ifndef AppBinary
   #define AppBinary "target\x86_64-pc-windows-msvc\release\napomni.exe"
 #endif
@@ -36,6 +39,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "{#AppBinary}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#CliBinary}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
