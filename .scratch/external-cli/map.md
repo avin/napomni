@@ -10,6 +10,8 @@
 
 ## Decisions-so-far
 
+- [02: Local CLI host](issues/02-local-cli-host.md): Windows owner-only named pipe, pre-load file lock, JSON list, bounded result acknowledgement, sibling executable discovery; real isolated CLI tests pass. Installer execution/foreground manual acceptance remains open.
+
 - [01](issues/01-independent-toast-identity.md): independent UUID card identity, optional reminder association and observed-card actions; legacy snooze compatibility and existing scheduling behavior covered by public core tests.
 
 ## Fog

@@ -4,7 +4,10 @@ pub mod catalog;
 pub mod chat;
 pub mod commands;
 pub mod constraints;
+pub mod external_commands;
 mod interval;
+#[cfg(windows)]
+pub mod local_host;
 mod mutation_tools;
 pub mod mutations;
 pub mod placement;
