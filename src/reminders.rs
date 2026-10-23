@@ -10,6 +10,8 @@ use std::{
 };
 
 pub type ReminderId = u64;
+/// Identity of a card, independent of any saved reminder.
+pub type ToastId = uuid::Uuid;
 #[derive(Clone, Copy, Debug)]
 pub struct TimeSample {
     pub utc: DateTime<Utc>,
@@ -393,7 +395,9 @@ pub struct Reminder {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ToastSnapshot {
-    pub reminder_id: ReminderId,
+    #[serde(default = "uuid::Uuid::new_v4")]
+    pub id: ToastId,
+    pub reminder_id: Option<ReminderId>,
     pub text: String,
     pub border: u32,
     pub sound: bool,
@@ -532,16 +536,17 @@ impl Application {
         *after = (*after).max(now);
     }
     /// Hide this occurrence without closing it or changing the recurrence phase.
-    pub fn snooze_toast(&mut self, id: ReminderId, minutes: u32) -> Result<()> {
+    pub fn snooze_toast(&mut self, id: ToastId, minutes: u32) -> Result<()> {
         ensure!(minutes > 0, "Укажите положительное число минут");
-        let Some(snapshot) = self.toasts.iter().find(|t| t.reminder_id == id).cloned() else {
+        let Some(snapshot) = self.toasts.iter().find(|t| t.id == id).cloned() else {
             return Ok(());
         };
+        let reminder_id = snapshot.reminder_id.context("Toast has no reminder")?;
         let reminder = self
             .state
             .reminders
             .iter()
-            .find(|r| r.id == id)
+            .find(|r| r.id == reminder_id)
             .context("Напоминание удалено")?;
         ensure!(!reminder.paused, "Напоминание на паузе");
         let now = self.clock.sample().utc;
@@ -549,7 +554,7 @@ impl Application {
             .checked_add_signed(Duration::minutes(i64::from(minutes)))
             .context("Слишком далёкое время")?;
         let mut next = self.state.clone();
-        next.snoozed.retain(|s| s.snapshot.reminder_id != id);
+        next.snoozed.retain(|s| s.snapshot.id != id);
         next.snoozed.push(SnoozedToast {
             snapshot,
             snoozed_at: now,
@@ -557,22 +562,29 @@ impl Application {
         });
         self.store.save(&next)?;
         self.state = next;
-        self.toasts.retain(|t| t.reminder_id != id);
+        self.toasts.retain(|t| t.id != id);
         Ok(())
     }
-    pub fn close_toast(&mut self, id: ReminderId) -> Result<()> {
-        if self.toasts.iter().any(|t| t.reminder_id == id) {
+    pub fn close_toast(&mut self, id: ToastId) -> Result<()> {
+        if let Some(snapshot) = self.toasts.iter().find(|t| t.id == id) {
+            let reminder_id = snapshot.reminder_id;
             let now = self.clock.sample().utc;
             let mut next = self.state.clone();
-            if let Some(reminder) = next.reminders.iter_mut().find(|r| r.id == id) {
+            if let Some(reminder) = next
+                .reminders
+                .iter_mut()
+                .find(|r| Some(r.id) == reminder_id)
+            {
                 reminder.schedule.restart_after_close(now)?;
             }
             if next.reminders != self.state.reminders {
                 self.store.save(&next)?;
                 self.state = next;
             }
-            self.skip_through(id, now);
-            self.toasts.retain(|t| t.reminder_id != id);
+            if let Some(reminder_id) = reminder_id {
+                self.skip_through(reminder_id, now);
+            }
+            self.toasts.retain(|t| t.id != id);
         }
         Ok(())
     }
@@ -599,7 +611,7 @@ impl Application {
             .state
             .snoozed
             .iter()
-            .find(|s| s.snapshot.reminder_id == id)
+            .find(|s| s.snapshot.reminder_id == Some(id))
         {
             let at = scheduled
                 .filter(|at| *at <= snoozed.at)
@@ -620,11 +632,14 @@ impl Application {
         if reminder.completed {
             return None;
         }
-        if reminder.schedule.is_after_close() && self.toasts.iter().any(|t| t.reminder_id == id) {
+        if reminder.schedule.is_after_close()
+            && self.toasts.iter().any(|t| t.reminder_id == Some(id))
+        {
             return Some("Ожидает закрытия уведомления".into());
         }
         // A due occurrence is pending work, never a prediction of a later grid point.
-        if scheduled.is_some_and(|at| at <= now) && !self.toasts.iter().any(|t| t.reminder_id == id)
+        if scheduled.is_some_and(|at| at <= now)
+            && !self.toasts.iter().any(|t| t.reminder_id == Some(id))
         {
             return Some("Ожидает показа уведомления".into());
         }
@@ -683,7 +698,9 @@ impl Application {
     ) -> Vec<ToastSnapshot> {
         let mut snapshots = Vec::new();
         next.snoozed.retain(|snoozed| {
-            let id = snoozed.snapshot.reminder_id;
+            let Some(id) = snoozed.snapshot.reminder_id else {
+                return false;
+            };
             let Some(reminder) = next.reminders.iter().find(|r| r.id == id) else {
                 return false;
             };
@@ -700,7 +717,7 @@ impl Application {
                 return false;
             }
             if snoozed.at <= now {
-                if !self.toasts.iter().any(|t| t.reminder_id == id) {
+                if !self.toasts.iter().any(|t| t.reminder_id == Some(id)) {
                     snapshots.push(snoozed.snapshot.clone());
                 }
                 return false;
@@ -729,16 +746,19 @@ impl Application {
                 !next
                     .reminders
                     .iter()
-                    .any(|r| r.id == s.snapshot.reminder_id && r.schedule.is_after_close())
+                    .any(|r| Some(r.id) == s.snapshot.reminder_id && r.schedule.is_after_close())
             });
         }
         for reminder in &mut next.reminders {
-            let missing_occurrence = !self.toasts.iter().any(|t| t.reminder_id == reminder.id)
+            let missing_occurrence = !self
+                .toasts
+                .iter()
+                .any(|t| t.reminder_id == Some(reminder.id))
                 && !self
                     .state
                     .snoozed
                     .iter()
-                    .any(|s| s.snapshot.reminder_id == reminder.id)
+                    .any(|s| s.snapshot.reminder_id == Some(reminder.id))
                 && reminder
                     .schedule
                     .after_close_needs_restart(now.utc, self.clock());
@@ -785,12 +805,15 @@ impl Application {
                 continue;
             }
             if reminder.schedule.is_after_close() {
-                if self.toasts.iter().any(|t| t.reminder_id == reminder.id)
+                if self
+                    .toasts
+                    .iter()
+                    .any(|t| t.reminder_id == Some(reminder.id))
                     || self
                         .state
                         .snoozed
                         .iter()
-                        .any(|s| s.snapshot.reminder_id == reminder.id)
+                        .any(|s| s.snapshot.reminder_id == Some(reminder.id))
                 {
                     continue;
                 }
@@ -833,9 +856,14 @@ impl Application {
                 }
                 consumed.push(reminder.id);
                 reminder.completed = reminder.schedule.ended_at(now.utc, self.clock());
-                if !self.toasts.iter().any(|t| t.reminder_id == reminder.id) {
+                if !self
+                    .toasts
+                    .iter()
+                    .any(|t| t.reminder_id == Some(reminder.id))
+                {
                     snapshots.push(ToastSnapshot {
-                        reminder_id: reminder.id,
+                        id: uuid::Uuid::new_v4(),
+                        reminder_id: Some(reminder.id),
                         text: reminder.text.clone(),
                         border: reminder.border,
                         sound: reminder.sound,
