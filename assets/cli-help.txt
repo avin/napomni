@@ -1,0 +1,63 @@
+Napomni CLI
+
+Usage:
+  napomni-cli list
+  napomni-cli create JSON|-
+  napomni-cli update JSON|-
+  napomni-cli pause JSON|-
+  napomni-cli resume JSON|-
+  napomni-cli delete JSON|-
+  napomni-cli undo
+  napomni-cli schema
+
+Pass one JSON object as a single argument, or '-' to read UTF-8 JSON from stdin.
+PowerShell example (the call operator supports paths containing spaces):
+  $json = '{"text":"Drink water","schedule":{"kind":"after_seconds","seconds":3600}}'
+  $json | & 'C:\path with spaces\napomni-cli.exe' create -
+
+Commands and JSON objects:
+  list    No arguments. All saved reminders, including chat-created records.
+  create  {"text":"...","schedule":{...},"border":255,"sound":true}
+          border (RGB integer 0..16777215) and sound are optional; defaults blue/true.
+  update  {"id":1,"patch":{"text":"New text","sound":false}}
+          Patch properties: text, schedule, limits, border, sound. Include only
+          properties to change; at least one property is required. Others survive.
+  pause   {"id":1}   Stop future occurrences; keep already open toast snapshots.
+  resume  {"id":1}   Resume scheduling without replaying missed occurrences.
+  delete  {"id":1}   Delete a saved reminder; keep already open toast snapshots.
+  undo    No arguments. Undo the application's last reminder change, from either
+          chat or CLI. Closed toast windows are never restored.
+  schema  No arguments. Print exact JSON argument schemas without starting the app.
+
+Schedule forms (Windows local time; dates YYYY-MM-DD, times HH:MM:SS):
+  {"kind":"after_seconds","seconds":3600}
+  {"kind":"at_local","date_time":"2026-12-01T10:00:00"}
+  {"kind":"tomorrow","time":"10:00:00"}
+  {"kind":"interval","seconds":3600}
+  {"kind":"interval_after_close","seconds":3600}
+    Optional start_local: "2026-12-01T10:00:00" on either interval form.
+    interval_after_close is opt-in; its next interval starts when the toast closes.
+  {"kind":"weekly","weekdays":[1,3],"times":["10:00:00"],"every_n_weeks":1}
+    Weekdays 1=Monday..7=Sunday. For cycles >1 add anchor_monday: "2026-11-30".
+  {"kind":"monthly","days":[1,31],"times":["10:00:00"]}
+  {"kind":"yearly","dates":[{"month":2,"day":29}],"times":["10:00:00"]}
+    Invalid calendar dates are skipped, not shifted to other days.
+  {"kind":"constrained","base":{"kind":"interval","seconds":3600},
+   "limits":{"start_date":"2026-12-01","end_date":"2026-12-31",
+             "window":{"start":"09:00:00","end":"17:00:00"},
+             "weekdays":[1,2,3,4,5],"excluded_dates":["2026-12-25"]}}
+    Limits properties are optional. Base must repeat and cannot be constrained.
+    update patch.limits replaces limits as a whole; {} clears existing limits.
+    Seconds must be positive; nonexistent/ambiguous explicit local times fail.
+
+Results are JSON. List entries contain reminder (stable id and saved properties),
+schedule_description and schedule_status. Create/update/pause/resume return the
+saved reminder and schedule_description; delete returns deleted_id; undo reports
+its result and a restored reminder when applicable. host_pid identifies the owner.
+Use stable IDs, not text, to select records: duplicate text is allowed.
+
+The CLI connects to the current Windows user's local application, starting it
+in the background if needed. No provider, model, API key or internet is needed.
+Success (exit 0) follows the application's completed result; failures use stderr
+and exit 1. Waiting is bounded to 20 seconds. A lost reply may follow execution:
+the client never automatically repeats a sent command.
