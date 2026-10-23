@@ -247,15 +247,41 @@ fn launch_app() -> Result<()> {
 }
 pub fn run_cli(args: Vec<String>) -> Result<()> {
     if args.is_empty() || matches!(args[0].as_str(), "--help" | "-h" | "help") {
+        print!("{}", include_str!("../assets/cli-help.txt"));
+        return Ok(());
+    }
+    if args[0] == "schema" {
+        ensure!(args.len() == 1, "schema takes no arguments");
         println!(
-            "Napomni CLI\n\nUsage: napomni-cli list\n       napomni-cli notify <text>\n\nnotify  Show one independent notification (blue border, sound) for each call, even with identical text. Quote text as one argument; Unicode and newlines are preserved. Returns success/error without waiting for closure.\n\nlist  Return JSON with all saved reminders (stable IDs, schedule descriptions and statuses).\n\nConnects to the current Windows user's local app; starts it in the background if needed.\nSuccess is reported only after the application's result. Errors go to stderr with exit code 1."
+            "{}",
+            serde_json::to_string_pretty(&crate::external_commands::schemas())?
         );
         return Ok(());
     }
     let arguments = match args[0].as_str() {
-        "list" if args.len() == 1 => json!({}),
         "notify" if args.len() == 2 => json!({"text":args[1]}),
-        _ => bail!("Unknown command or arguments. Run napomni-cli --help"),
+        "list" | "undo" => {
+            ensure!(args.len() == 1, "This command takes no arguments");
+            json!({})
+        }
+        "create" | "update" | "pause" | "resume" | "delete" => {
+            ensure!(
+                args.len() == 2,
+                "Pass one JSON object, or '-' to read JSON from stdin"
+            );
+            let input = if args[1] == "-" {
+                use std::io::Read;
+                let mut input = String::new();
+                std::io::stdin().read_to_string(&mut input)?;
+                input
+            } else {
+                args[1].clone()
+            };
+            let arguments: Value = serde_json::from_str(&input).context("Invalid command JSON")?;
+            ensure!(arguments.is_object(), "Command JSON must be an object");
+            arguments
+        }
+        _ => bail!("Unknown command. Run napomni-cli --help"),
     };
     let result = request(&args[0], arguments, true)?;
     if result["ok"] != true {

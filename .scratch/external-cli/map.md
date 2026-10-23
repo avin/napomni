@@ -10,6 +10,8 @@
 
 ## Decisions-so-far
 
+- [04](issues/04-reminder-management.md): complete reminder CRUD/pause/resume/shared undo via existing tool dispatcher; inline/stdin JSON, exact tool-derived schemas, documented schedules; core and real CLI failure/restart checks passed.
+
 - [03](issues/03-immediate-notifications.md): `notify <text>` creates an independent ephemeral card through the shared handler and native stack; exact CLI text transport and real native cold-launch visibility/focus verified. Physical audibility remains an integration check.
 
 - [02: Local CLI host](issues/02-local-cli-host.md): Windows owner-only named pipe, pre-load file lock, JSON list, bounded result acknowledgement, sibling executable discovery; real isolated CLI tests pass. Installer execution/foreground manual acceptance remains open.
