@@ -72,13 +72,14 @@ fn windows_powershell_helper_preserves_exact_notification_text() {
     )
     .unwrap();
     let text = "Кириллица Say \"hi\" \\path\\\nnext line\\";
+    // Reproduce CI consoles whose input encoding emits a UTF-8 BOM.
     let output = Command::new("powershell.exe")
         .args([
             "-NoProfile",
             "-ExecutionPolicy",
             "Bypass",
             "-Command",
-            "& $env:NAPOMNI_HELPER -Text $env:NAPOMNI_TEST_TEXT",
+            "[Console]::InputEncoding = [System.Text.UTF8Encoding]::new($true); & $env:NAPOMNI_HELPER -Text $env:NAPOMNI_TEST_TEXT",
         ])
         .env("NAPOMNI_HELPER", installed.join("scripts/notify.ps1"))
         .env("NAPOMNI_TEST_TEXT", text)

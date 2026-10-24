@@ -1,6 +1,8 @@
 param([Parameter(Mandatory = $true)][AllowEmptyString()][string]$Text)
 $ErrorActionPreference = 'Stop'
 $utf8 = [System.Text.UTF8Encoding]::new($false)
+# .NET Framework derives redirected stdin encoding from the console input encoding.
+[Console]::InputEncoding = $utf8
 [Console]::OutputEncoding = $utf8
 $cli = (Get-Content -LiteralPath (Join-Path $PSScriptRoot '../cli-path.json') -Raw -Encoding UTF8 | ConvertFrom-Json).cli
 $start = [System.Diagnostics.ProcessStartInfo]::new()
