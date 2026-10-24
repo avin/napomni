@@ -58,7 +58,7 @@ fn choosing_another_root_keeps_the_old_copy_and_other_skills() {
 }
 
 #[test]
-fn settings_install_reports_bad_paths_and_required_file_write_failures() {
+fn settings_install_reports_bad_paths() {
     let temp = tempfile::tempdir().unwrap();
     let cli = temp.path().join("napomni-cli.exe");
     std::fs::write(&cli, b"location").unwrap();
@@ -74,12 +74,43 @@ fn settings_install_reports_bad_paths_and_required_file_write_failures() {
         )
         .is_err()
     );
-    for (root_name, blocked_file) in [
-        ("blocked skill", "SKILL.md"),
-        ("blocked cli resource", "cli-path.json"),
-    ] {
-        let root = temp.path().join(root_name);
-        std::fs::create_dir_all(root.join("napomni").join(blocked_file)).unwrap();
-        assert!(install(&root, &cli).is_err());
-    }
+}
+
+#[test]
+fn reinstall_removes_old_contents_and_preserves_neighboring_skills() {
+    let temp = tempfile::tempdir().unwrap();
+    let cli = temp.path().join("napomni-cli.exe");
+    std::fs::write(&cli, b"location").unwrap();
+    let root = temp.path().join("skills");
+    let destination = root.join("napomni");
+    std::fs::create_dir_all(destination.join("old/nested")).unwrap();
+    std::fs::write(destination.join("old/nested/file.txt"), "obsolete").unwrap();
+    std::fs::write(destination.join("old.txt"), "obsolete").unwrap();
+    std::fs::create_dir(destination.join("SKILL.md")).unwrap();
+    std::fs::create_dir(destination.join("cli-path.json")).unwrap();
+    std::fs::create_dir_all(root.join("neighbor")).unwrap();
+    std::fs::write(root.join("neighbor/SKILL.md"), "keep").unwrap();
+
+    install(&root, &cli).unwrap();
+
+    assert_eq!(std::fs::read_dir(&destination).unwrap().count(), 3);
+    assert!(destination.join("SKILL.md").is_file());
+    assert!(destination.join("cli-path.json").is_file());
+    assert!(destination.join("scripts/notify.ps1").is_file());
+    assert_eq!(
+        std::fs::read_to_string(root.join("neighbor/SKILL.md")).unwrap(),
+        "keep"
+    );
+}
+
+#[test]
+fn reinstall_preserves_contents_when_cli_is_inside_the_skill_folder() {
+    let temp = tempfile::tempdir().unwrap();
+    let destination = temp.path().join("napomni");
+    std::fs::create_dir(&destination).unwrap();
+    let cli = destination.join("napomni-cli.exe");
+    std::fs::write(&cli, b"keep").unwrap();
+
+    assert!(install(temp.path(), &cli).is_err());
+    assert_eq!(std::fs::read(cli).unwrap(), b"keep");
 }

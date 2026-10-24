@@ -7,6 +7,7 @@ use gpui::component::{
         Input, InputEvent, InputGroup, InputGroupAddon, InputGroupAddonAlignment, InputGroupButton,
         InputState,
     },
+    notification::{Notification, NotificationType},
     scroll::{Scrollbar, ScrollbarMode},
     spinner::Spinner,
     switch::Switch,
@@ -80,7 +81,6 @@ pub struct MainWindow {
     history_scroll: ScrollHandle,
     reminders_scroll: ScrollHandle,
     settings_scroll: ScrollHandle,
-    status_scroll: ScrollHandle,
 }
 impl MainWindow {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -197,7 +197,6 @@ impl MainWindow {
             history_scroll,
             reminders_scroll: ScrollHandle::new(),
             settings_scroll: ScrollHandle::new(),
-            status_scroll: ScrollHandle::new(),
         }
     }
     fn apply_list_action(&mut self, action: ListAction, cx: &mut Context<Self>) {
@@ -675,7 +674,7 @@ impl MainWindow {
                                 Button::new("install-skill")
                                     .icon(IconName::Download)
                                     .label("Установить скилл")
-                                    .on_click(cx.listener(|this, _, _, cx| {
+                                    .on_click(cx.listener(|this, _, window, cx| {
                                         let root = this.skills_root.read(cx).value().to_string();
                                         let result = (|| -> anyhow::Result<std::path::PathBuf> {
                                             let cli = std::env::current_exe()?
@@ -685,15 +684,16 @@ impl MainWindow {
                                                 &cli,
                                             )
                                         })();
-                                        this.status = match result {
-                                            Ok(path) => {
-                                                format!("Скилл установлен: {}", path.display())
-                                            }
-                                            Err(error) => {
-                                                format!("Не удалось установить скилл: {error:#}")
-                                            }
+                                        let notification = match result {
+                                            Ok(path) => Notification::success(format!(
+                                                "Скилл установлен: {}",
+                                                path.display()
+                                            )),
+                                            Err(error) => Notification::error(format!(
+                                                "Не удалось установить скилл: {error:#}"
+                                            )),
                                         };
-                                        cx.notify();
+                                        window.push_notification(notification, cx);
                                     })),
                             ),
                     )
@@ -1055,18 +1055,6 @@ impl MainWindow {
                     .child("Ассистент готовит ответ…"),
             );
         }
-        if !self.status.is_empty() {
-            history = history.child(
-                div()
-                    .id("chat-status")
-                    .flex_shrink_0()
-                    .p_3()
-                    .rounded_lg()
-                    .bg(t.secondary)
-                    .text_sm()
-                    .child(self.status.clone()),
-            );
-        }
         let configured = self
             .session
             .as_ref()
@@ -1225,7 +1213,8 @@ impl MainWindow {
 }
 
 impl Render for MainWindow {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        notify_pending(&mut self.status, NotificationType::Info, window, cx);
         let t = cx.theme().clone();
         div()
             .size_full()
@@ -1272,33 +1261,6 @@ impl Render for MainWindow {
                 Page::Reminders => self.workspace(cx).into_any_element(),
                 Page::Settings => self.connection_settings(cx).into_any_element(),
             })
-            .when(
-                self.page == Page::Settings && !self.status.is_empty(),
-                |e| {
-                    e.child(
-                        div()
-                            .relative()
-                            .flex_shrink_0()
-                            .child(
-                                div()
-                                    .id("status")
-                                    .track_scroll(&self.status_scroll)
-                                    .max_h(px(72.))
-                                    .overflow_y_scroll()
-                                    .px_3()
-                                    .py_2()
-                                    .bg(t.secondary)
-                                    .text_sm()
-                                    .pr_6()
-                                    .child(self.status.clone()),
-                            )
-                            .child(
-                                Scrollbar::vertical(&self.status_scroll)
-                                    .mode(ScrollbarMode::Always),
-                            ),
-                    )
-                },
-            )
     }
 }
 
@@ -1325,40 +1287,28 @@ pub fn error_message(message: String) -> Div {
     div().p_3().font_family("Segoe UI").child(message)
 }
 
+// Defer overlay updates until the current view has finished rendering.
+pub(crate) fn notify_pending(
+    message: &mut String,
+    kind: NotificationType,
+    window: &mut Window,
+    cx: &mut gpui::App,
+) {
+    if !message.is_empty() {
+        let notification = Notification::new()
+            .message(std::mem::take(message))
+            .with_type(kind);
+        window.defer(cx, move |window, cx| {
+            window.push_notification(notification, cx)
+        });
+    }
+}
+
 fn show_probe_result(message: String, success: bool, window: &mut Window, cx: &mut gpui::App) {
-    window.open_dialog(cx, move |dialog, _, cx| {
-        let theme = cx.theme();
-        dialog
-            .title(if success {
-                "Подключение работает"
-            } else {
-                "Не удалось проверить подключение"
-            })
-            .width(px(520.))
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap_3()
-                    .child(TextLineIcon(
-                        Icon::new(if success {
-                            IconName::CircleCheck
-                        } else {
-                            IconName::CircleAlert
-                        })
-                        .text_color(if success {
-                            theme.success
-                        } else {
-                            theme.danger
-                        }),
-                    ))
-                    .child(div().flex_1().min_w_0().child(message.clone())),
-            )
-            .footer(
-                Button::new("close-probe-result")
-                    .icon(IconName::Check)
-                    .label("Понятно")
-                    .on_click(|_, window, cx| window.close_dialog(cx)),
-            )
-    });
+    let notification = if success {
+        Notification::success(message)
+    } else {
+        Notification::error(message)
+    };
+    window.push_notification(notification, cx);
 }

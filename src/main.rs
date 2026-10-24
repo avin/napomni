@@ -104,6 +104,9 @@ fn main() {
         .run(move |cx: &mut App| {
             gpui::init(cx);
             gpui::component::Theme::sync_system_appearance(None, cx);
+            gpui::component::Theme::update(cx, |theme| {
+                theme.notification.placement = gpui::Anchor::TopCenter;
+            });
             let result = (|| -> Result<()> {
                 settings_ui::initialize(cx)?;
                 reminder_ui::initialize(cx)?;

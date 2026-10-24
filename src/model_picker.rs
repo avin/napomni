@@ -117,14 +117,19 @@ impl ModelPicker {
     }
 }
 impl Render for ModelPicker {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        crate::ui::notify_pending(
+            &mut self.status,
+            gpui::component::notification::NotificationType::Error,
+            window,
+            cx,
+        );
         let theme = cx.theme();
         let background = theme.background;
         let foreground = theme.foreground;
         let muted = theme.muted;
         let muted_text = theme.muted_foreground;
         let border = theme.border;
-        let danger = theme.danger;
         let results = self
             .catalog
             .search(&self.search.read(cx).value())
@@ -273,16 +278,5 @@ impl Render for ModelPicker {
                         )
                     }),
             )
-            .when(self.failed, |view| {
-                view.child(
-                    div()
-                        .flex_shrink_0()
-                        .px_3()
-                        .pb_2()
-                        .text_sm()
-                        .text_color(danger)
-                        .child(self.status.clone()),
-                )
-            })
     }
 }

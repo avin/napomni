@@ -29,7 +29,7 @@ pub fn initialize(cx: &mut App) -> anyhow::Result<()> {
 pub fn open(window: &mut Window, cx: &mut App) {
     let settings = cx.new(|_| SettingsView {
         message: String::new(),
-        failed: false,
+        monitor_error: None,
         scroll: ScrollHandle::new(),
     });
     window.open_dialog(cx, move |dialog, window, _| {
@@ -43,7 +43,7 @@ pub fn open(window: &mut Window, cx: &mut App) {
 
 struct SettingsView {
     message: String,
-    failed: bool,
+    monitor_error: Option<String>,
     scroll: ScrollHandle,
 }
 impl SettingsView {
@@ -51,18 +51,16 @@ impl SettingsView {
         match cx.global_mut::<DesktopSettings>().0.save(next) {
             Ok(()) => {
                 self.message.clear();
-                self.failed = false;
             }
             Err(error) => {
                 self.message = error.to_string();
-                self.failed = true;
             }
         }
         cx.notify();
     }
 }
 impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let background = theme.background;
         let foreground = theme.foreground;
@@ -70,20 +68,27 @@ impl Render for SettingsView {
         let muted_text = theme.muted_foreground;
         let border = theme.border;
         let primary = theme.primary;
-        let status_color = if self.failed {
-            theme.danger
-        } else {
-            theme.success
-        };
         let settings = cx.global::<DesktopSettings>().0.settings().clone();
         let monitors = match cx.global::<DesktopSettings>().0.monitors() {
-            Ok(monitors) => monitors,
+            Ok(monitors) => {
+                self.monitor_error = None;
+                monitors
+            }
             Err(error) => {
-                self.message = error.to_string();
-                self.failed = true;
+                let message = error.to_string();
+                if self.monitor_error.as_ref() != Some(&message) {
+                    self.message = message.clone();
+                    self.monitor_error = Some(message);
+                }
                 Vec::new()
             }
         };
+        crate::ui::notify_pending(
+            &mut self.message,
+            gpui::component::notification::NotificationType::Error,
+            window,
+            cx,
+        );
         let mut monitor_list = div().flex().flex_col().gap_2();
         for (index, monitor) in monitors.into_iter().enumerate() {
             let selected = settings
@@ -204,14 +209,7 @@ impl Render for SettingsView {
                     .flex()
                     .items_center()
                     .gap_4()
-                    .child(div().flex_1().when(!self.message.is_empty(), |e| {
-                        e.child(
-                            div()
-                                .text_sm()
-                                .text_color(status_color)
-                                .child(self.message.clone()),
-                        )
-                    }))
+                    .child(div().flex_1())
                     .child(
                         Button::new("close-settings")
                             .icon(IconName::Check)
