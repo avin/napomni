@@ -10,7 +10,7 @@
 
 ## Decisions-so-far
 
-- [06](issues/06-install-agent-skill.md): main Settings installs bundled English skill under chosen root; generated UTF8 CLI-path resource handles spaces; filesystem/real CLI resource checks and format validator passed. Independent skill forward test and installed Windows UI acceptance remain pending.
+- [06](issues/06-install-agent-skill.md): main Settings installs bundled English skill under chosen root; generated UTF8 CLI-path resource handles spaces; filesystem/real CLI resource checks, format validator and independent installed-skill forward test passed. Installed Windows UI acceptance remains pending.
 
 - [05](issues/05-immediate-snooze-recovery.md): independent pending snapshots retain absolute deadlines and survive restart/undo; five new core scenarios plus existing snooze/after-close/mutation suites passed (42 tests). Native button/restart and physical sound acceptance remain to be checked.
 
@@ -25,3 +25,5 @@
 ## Fog
 
 - Визуальные и звуковые результаты Windows отмечаются отдельно от проверок ядра и процессов.
+
+- Итог: 135 тестов прошли, три намеренно пропущены; fmt, Clippy и валидатор скилла пройдены. Все замечания двух направлений ревью исправлены и перепроверены. Временные worktree удалены. [Протокол](../../docs/verification/external-cli.md), [исправления ревью](../../docs/verification/external-cli-review.md).

@@ -67,6 +67,6 @@ the reviewed result semantics.
 These automated checks do not establish physical audibility or installed
 Settings field/button/success/error interaction. Native computer-use capture was
 unavailable to the root agent, so those manual checks remain pending. The root
-agent will separately evaluate the installed English skill in an isolated
-environment after merging these fixes. The installed user instance was not
+agent subsequently evaluated the installed English skill successfully in an isolated
+environment after merging these fixes; see [the final protocol](external-cli.md). The installed user instance was not
 modified or terminated by these tests.
