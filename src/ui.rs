@@ -686,7 +686,7 @@ impl MainWindow {
                                         })();
                                         let notification = match result {
                                             Ok(path) => Notification::success(format!(
-                                                "Скилл установлен: {}",
+                                                "Скилл установлен:\n{}",
                                                 path.display()
                                             )),
                                             Err(error) => Notification::error(format!(
