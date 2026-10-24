@@ -631,39 +631,6 @@ impl MainWindow {
                             .flex()
                             .flex_col()
                             .gap_3()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child("Интеграция с агентами"))
-                            .child(field("Папка скиллов", Input::new(&self.skills_root)))
-                            .child(
-                                div().text_sm().text_color(t.muted_foreground)
-                                    .child("Английская инструкция для уведомлений и управления напоминаниями через CLI."),
-                            )
-                            .child(
-                                Button::new("install-skill")
-                                    .label("Установить скилл")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        let root = this.skills_root.read(cx).value().to_string();
-                                        let result = (|| -> anyhow::Result<std::path::PathBuf> {
-                                            let cli = std::env::current_exe()?.with_file_name("napomni-cli.exe");
-                                            napomni::skill_install::install(std::path::Path::new(&root), &cli)
-                                        })();
-                                        this.status = match result {
-                                            Ok(path) => format!("Скилл установлен: {}", path.display()),
-                                            Err(error) => format!("Не удалось установить скилл: {error:#}"),
-                                        };
-                                        cx.notify();
-                                    })),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .p_4()
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(t.border)
-                            .bg(t.background)
-                            .flex()
-                            .flex_col()
-                            .gap_3()
                             .child(div().font_weight(FontWeight::SEMIBOLD).child("Тосты"))
                             .child(field(
                                 "Откладывать на, мин",
@@ -686,6 +653,48 @@ impl MainWindow {
                                             .label("Тест тостов")
                                             .on_click(|_, _, cx| schedule_demo(cx)),
                                     ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .p_4()
+                            .rounded_lg()
+                            .border_1()
+                            .border_color(t.border)
+                            .bg(t.background)
+                            .flex()
+                            .flex_col()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .child("Интеграция с агентами"),
+                            )
+                            .child(field("Папка скиллов", Input::new(&self.skills_root)))
+                            .child(
+                                Button::new("install-skill")
+                                    .icon(IconName::Download)
+                                    .label("Установить скилл")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        let root = this.skills_root.read(cx).value().to_string();
+                                        let result = (|| -> anyhow::Result<std::path::PathBuf> {
+                                            let cli = std::env::current_exe()?
+                                                .with_file_name("napomni-cli.exe");
+                                            napomni::skill_install::install(
+                                                std::path::Path::new(&root),
+                                                &cli,
+                                            )
+                                        })();
+                                        this.status = match result {
+                                            Ok(path) => {
+                                                format!("Скилл установлен: {}", path.display())
+                                            }
+                                            Err(error) => {
+                                                format!("Не удалось установить скилл: {error:#}")
+                                            }
+                                        };
+                                        cx.notify();
+                                    })),
                             ),
                     )
                     .child(
