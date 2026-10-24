@@ -2,48 +2,16 @@
 use serde_json::Value;
 use std::process::{Command, Output};
 
-struct Instance {
-    dir: tempfile::TempDir,
-    pid: Option<u32>,
-}
+#[path = "support/desktop.rs"]
+mod desktop;
+use desktop::DesktopInstance as Instance;
+
 impl Instance {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join("installed app with spaces");
-        std::fs::create_dir(&bin).unwrap();
-        for (source, name) in [
-            (env!("CARGO_BIN_EXE_napomni"), "napomni.exe"),
-            (env!("CARGO_BIN_EXE_napomni-cli"), "napomni-cli.exe"),
-        ] {
-            std::fs::copy(source, bin.join(name)).unwrap();
-        }
-        Self { dir, pid: None }
-    }
-    fn command(&self) -> Command {
-        let mut command = Command::new(
-            self.dir
-                .path()
-                .join("installed app with spaces/napomni-cli.exe"),
-        );
-        command
-            .env("NAPOMNI_DATA_DIR", self.dir.path())
-            .env_remove("NAPOMNI_APP_EXE");
-        command
-    }
     fn list(&mut self) -> Value {
         let output = self.command().arg("list").output().unwrap();
         let result = success(output);
         self.pid = Some(result["host_pid"].as_u64().unwrap() as u32);
         result
-    }
-}
-impl Drop for Instance {
-    fn drop(&mut self) {
-        if let Some(pid) = self.pid {
-            let _ = Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/F"])
-                .output();
-        }
     }
 }
 fn success(output: Output) -> Value {

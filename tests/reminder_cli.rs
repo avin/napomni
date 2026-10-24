@@ -1,34 +1,12 @@
 #![cfg(windows)]
 use serde_json::{Value, json};
-use std::{
-    io::Write,
-    process::{Command, Stdio},
-};
+use std::{io::Write, process::Stdio};
 
-struct Instance {
-    dir: tempfile::TempDir,
-    pid: Option<u32>,
-}
+#[path = "support/desktop.rs"]
+mod desktop;
+use desktop::DesktopInstance as Instance;
+
 impl Instance {
-    fn new() -> Self {
-        let dir = tempfile::tempdir().unwrap();
-        let bin = dir.path().join("App with spaces");
-        std::fs::create_dir(&bin).unwrap();
-        for (source, name) in [
-            (env!("CARGO_BIN_EXE_napomni"), "napomni.exe"),
-            (env!("CARGO_BIN_EXE_napomni-cli"), "napomni-cli.exe"),
-        ] {
-            std::fs::copy(source, bin.join(name)).unwrap();
-        }
-        Self { dir, pid: None }
-    }
-    fn command(&self) -> Command {
-        let mut command = Command::new(self.dir.path().join("App with spaces/napomni-cli.exe"));
-        command
-            .env("NAPOMNI_DATA_DIR", self.dir.path())
-            .env_remove("NAPOMNI_APP_EXE");
-        command
-    }
     fn run(&mut self, command: &str, arguments: Option<&Value>) -> Value {
         let mut child = self.command();
         child.arg(command);
@@ -61,16 +39,6 @@ impl Instance {
         value
     }
 }
-impl Drop for Instance {
-    fn drop(&mut self) {
-        if let Some(pid) = self.pid {
-            let _ = Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/F"])
-                .output();
-        }
-    }
-}
-
 #[test]
 fn real_cli_creates_updates_pauses_resumes_undoes_and_deletes_the_same_record() {
     let mut instance = Instance::new();
@@ -139,24 +107,7 @@ fn real_cli_reports_save_failure_keeps_undo_and_restores_committed_data_after_re
         created["reminder"]
     );
     std::fs::remove_dir(pending).unwrap();
-    let pid = instance.pid.take().unwrap();
-    use windows::Win32::{
-        Foundation::{CloseHandle, WAIT_OBJECT_0},
-        System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE, WaitForSingleObject},
-    };
-    let process = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid).unwrap() };
-    assert!(
-        Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/F"])
-            .output()
-            .unwrap()
-            .status
-            .success()
-    );
-    unsafe {
-        assert_eq!(WaitForSingleObject(process, 5000), WAIT_OBJECT_0);
-        let _ = CloseHandle(process);
-    }
+    instance.stop().unwrap();
     assert_eq!(
         instance.run("list", None)["reminders"][0]["reminder"],
         created["reminder"]
@@ -196,4 +147,24 @@ fn real_cli_rejects_bad_json_unknown_ids_and_unknown_fields_without_changing_und
     );
     instance.run("undo", None);
     assert_eq!(instance.run("list", None)["reminders"], json!([]));
+}
+
+#[test]
+fn immediate_notification_succeeds_while_an_unrelated_due_reminder_cannot_save() {
+    let mut instance = Instance::new();
+    instance.run("create",Some(&json!({"text":"Due schedule", "schedule":{"kind":"after_seconds","seconds":1},"sound":false})));
+    std::fs::create_dir(instance.dir.path().join("reminders.pending")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1300));
+    let output = instance
+        .command()
+        .args(["notify", "Independent notification"])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["ok"], true);
 }

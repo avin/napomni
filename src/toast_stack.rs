@@ -36,8 +36,22 @@ enum Source {
 #[derive(Default)]
 struct Stacks {
     live: Option<WindowHandle<ToastStack>>,
+    live_ready: Option<NativeReady>,
     demo: Option<WindowHandle<ToastStack>>,
     demo_sequence: u64,
+}
+pub type NativeReady = tokio::sync::watch::Receiver<Option<Result<(), String>>>;
+
+pub async fn wait_until_ready(mut ready: NativeReady) -> anyhow::Result<()> {
+    loop {
+        if let Some(result) = ready.borrow().clone() {
+            return result.map_err(anyhow::Error::msg);
+        }
+        ready
+            .changed()
+            .await
+            .map_err(|_| anyhow::anyhow!("Native toast initialization ended without a result"))?;
+    }
 }
 impl Global for Stacks {}
 
@@ -45,7 +59,7 @@ pub fn initialize(cx: &mut App) {
     cx.set_global(Stacks::default());
 }
 
-pub fn sync(snapshots: Vec<ToastSnapshot>, cx: &mut App) -> anyhow::Result<()> {
+pub fn sync(snapshots: Vec<ToastSnapshot>, cx: &mut App) -> anyhow::Result<Option<NativeReady>> {
     let handle = cx.global::<Stacks>().live;
     let handle = update(handle, snapshots, Source::Live, cx)?;
     cx.global_mut::<Stacks>().live = handle;
@@ -53,7 +67,7 @@ pub fn sync(snapshots: Vec<ToastSnapshot>, cx: &mut App) -> anyhow::Result<()> {
     if let Some(demo) = cx.global::<Stacks>().demo {
         let _ = demo.update(cx, |view, window, cx| view.poll(window, cx));
     }
-    Ok(())
+    Ok(cx.global::<Stacks>().live_ready.clone())
 }
 
 pub fn show_demo(cx: &mut App) -> anyhow::Result<()> {
@@ -131,20 +145,27 @@ fn update(
             cx.new(|cx| ToastStack::new(snapshots, placement, bottom, source, cx))
         },
     )?;
+    let (ready_tx, ready_rx) = tokio::sync::watch::channel(None);
     handle.update(cx, |_, window, cx| {
-        if let Ok(task) = native::toast_region(window, cx, vec![]) {
-            task.detach();
-        }
+        let region = native::toast_region(window, cx, vec![])?;
         let task = native::place_toast(window, cx, x, y, width, height)?;
         cx.spawn(async move |_, cx| {
-            if let Err(error) = task.await {
+            let region_result = region.await;
+            let result = region_result
+                .and(task.await)
+                .map_err(|error| format!("{error:#}"));
+            if let Err(error) = &result {
                 eprintln!("Не удалось разместить стопку: {error:#}");
                 let _ = handle.update(cx, |_, window, _| window.remove_window());
             }
+            let _ = ready_tx.send(Some(result));
         })
         .detach();
         anyhow::Ok(())
     })??;
+    if source == Source::Live {
+        cx.global_mut::<Stacks>().live_ready = Some(ready_rx);
+    }
     Ok(Some(handle))
 }
 
@@ -528,8 +549,7 @@ impl Render for ToastStack {
         let bell_color = cx.theme().muted_foreground;
         let border_opacity = if (now.duration_since(self.pulse_since).as_millis()
             / BORDER_STEP.as_millis())
-            % 2
-            == 0
+        .is_multiple_of(2)
         {
             1.
         } else {

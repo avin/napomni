@@ -106,7 +106,7 @@ fn undo_preserves_identical_pending_notifications_and_regular_schedules_do_not_r
     let second = app.open_toasts()[0].clone();
     app.snooze_toast(first.id, 5).unwrap();
     assert!(app.signal_active());
-    assert_eq!(app.open_toasts(), &[second.clone()]);
+    assert_eq!(app.open_toasts(), std::slice::from_ref(&second));
     app.snooze_toast(second.id, 3).unwrap();
     assert!(!app.signal_active());
     let restored = app.undo().unwrap().unwrap();
@@ -168,7 +168,7 @@ fn failed_immediate_snooze_preserves_the_card_and_retry_sets_the_actual_deadline
     let snapshot = app.open_toasts()[0].clone();
     fail.store(true, Ordering::SeqCst);
     assert!(app.snooze_toast(snapshot.id, 5).is_err());
-    assert_eq!(app.open_toasts(), &[snapshot.clone()]);
+    assert_eq!(app.open_toasts(), std::slice::from_ref(&snapshot));
     assert!(app.signal_active());
     assert!(app.reminders().is_empty());
     clock.advance(120);

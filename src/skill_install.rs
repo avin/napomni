@@ -20,6 +20,13 @@ pub fn install(root: &Path, cli: &Path) -> Result<PathBuf> {
     let resource = serde_json::to_vec_pretty(&serde_json::json!({"cli":cli}))?;
     std::fs::write(destination.join("cli-path.json"), resource)
         .context("Не удалось записать путь CLI")?;
+    std::fs::create_dir_all(destination.join("scripts"))
+        .context("Не удалось создать папку ресурсов скилла")?;
+    std::fs::write(
+        destination.join("scripts/notify.ps1"),
+        include_str!("../assets/agent-skill/napomni/scripts/notify.ps1"),
+    )
+    .context("Не удалось записать помощник уведомлений")?;
     std::fs::write(
         destination.join("SKILL.md"),
         include_str!("../assets/agent-skill/napomni/SKILL.md"),

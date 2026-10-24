@@ -153,24 +153,36 @@ fn main() {
                             .await;
                         if cx.update(|cx| {
                             while let Ok(pending) = commands.try_recv() {
+                                let command = pending.request.command.clone();
                                 let result = if pending.request.command == "open" {
                                     open_main(cx);
                                     Ok(serde_json::json!({"ok":true}))
                                 } else {
-                                    let result = cx.global::<reminder_ui::Reminders>().app.lock()
+                                    cx.global::<reminder_ui::Reminders>().app.lock()
                                         .map_err(|_| anyhow::anyhow!("Reminder application unavailable"))
-                                        .and_then(|mut app| napomni::external_commands::execute(&mut app, &pending.request.command, &pending.request.arguments));
-                                    // Reply after the native adapter has reconciled toast windows.
-                                    result.and_then(|result| reminder_ui::poll(cx).map(|changed| {
-                                        if changed {
-                                            let view = cx.global::<Desktop>().view.clone();
-                                            view.update(cx, |_, cx| cx.notify());
-                                        }
-                                        result
-                                    }))
+                                        .and_then(|mut app| napomni::external_commands::execute(&mut app, &pending.request.command, &pending.request.arguments))
                                 };
-                                let response = result.unwrap_or_else(|error| serde_json::json!({"ok":false,"error":format!("{error:#}")}));
-                                let _ = pending.reply.send(response);
+                                // A scheduler tick is independent work. Reconcile only the
+                                // command's committed snapshots before acknowledging it.
+                                let (result, ready) = match result {
+                                    Ok(value) => {
+                                        let view = cx.global::<Desktop>().view.clone();
+                                        view.update(cx, |_, cx| cx.notify());
+                                        match reminder_ui::reconcile(cx) {
+                                            Ok((_, ready)) => (Ok(value), ready),
+                                            Err(error) => (napomni::external_commands::with_desktop_result(&command, value, Err(error)), None),
+                                        }
+                                    }
+                                    Err(error) => (Err(error), None),
+                                };
+                                cx.spawn(async move |_| {
+                                    let result = match (result, ready) {
+                                        (Ok(value), Some(ready)) => napomni::external_commands::with_desktop_result(&command, value, toast_stack::wait_until_ready(ready).await),
+                                        (result, _) => result,
+                                    };
+                                    let response = result.unwrap_or_else(|error| serde_json::json!({"ok":false,"error":format!("{error:#}")}));
+                                    let _ = pending.reply.send(response);
+                                }).detach();
                             }
                             match reminder_ui::poll(cx) {
                                 Ok(true) => {

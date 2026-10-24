@@ -9,6 +9,54 @@ use serde_json::json;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+#[test]
+fn committed_reminder_result_survives_a_desktop_adapter_failure() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("reminders.json");
+    let mut app =
+        Application::open(Arc::new(SystemClock), Box::new(JsonStore::new(&path))).unwrap();
+    let result = execute(
+        &mut app,
+        "create",
+        &json!({"text":"Committed", "schedule":{"kind":"after_seconds","seconds":3600}}),
+    )
+    .unwrap();
+    let result = napomni::external_commands::with_desktop_result(
+        "create",
+        result,
+        Err(anyhow::anyhow!("Native display unavailable")),
+    )
+    .unwrap();
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["reminder"]["text"], "Committed");
+    assert_eq!(result["warnings"].as_array().unwrap().len(), 1);
+    drop(app);
+    let mut app =
+        Application::open(Arc::new(SystemClock), Box::new(JsonStore::new(&path))).unwrap();
+    assert_eq!(app.reminders()[0].text, "Committed");
+    execute(&mut app, "undo", &json!({})).unwrap();
+    assert!(app.reminders().is_empty());
+}
+
+#[test]
+fn notification_adapter_failure_reports_uncertainty_for_an_already_created_card() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut app = Application::open(
+        Arc::new(SystemClock),
+        Box::new(JsonStore::new(directory.path().join("reminders.json"))),
+    )
+    .unwrap();
+    let result = execute(&mut app, "notify", &json!({"text":"Possibly shown"})).unwrap();
+    let error = napomni::external_commands::with_desktop_result(
+        "notify",
+        result,
+        Err(anyhow::anyhow!("Native placement failed")),
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("may already exist"));
+    assert_eq!(app.open_toasts().len(), 1);
+}
+
 struct TestClock(Mutex<TimeSample>);
 impl TestClock {
     fn new() -> Self {
