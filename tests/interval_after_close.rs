@@ -112,7 +112,7 @@ fn first_occurrence_uses_actual_creation_and_close_starts_a_full_new_interval() 
     );
     clock.advance(1500);
     app.tick().unwrap();
-    assert_eq!(app.open_toasts(), &[snapshot.clone()]);
+    assert_eq!(app.open_toasts(), std::slice::from_ref(&snapshot));
     assert!(!app.reminders()[0].completed);
     app.close_toast(observed_toast_id(&app, reminder.id))
         .unwrap();

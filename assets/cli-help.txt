@@ -3,6 +3,7 @@ Napomni CLI
 Usage:
   napomni-cli list
   napomni-cli notify <text>
+  napomni-cli notify --stdin
   napomni-cli create JSON|-
   napomni-cli update JSON|-
   napomni-cli pause JSON|-
@@ -20,6 +21,10 @@ PowerShell example (the call operator supports paths containing spaces):
 Keep these UTF-8 settings for native stdin/JSON output, especially PowerShell 5.
 
 Commands and JSON objects:
+  notify --stdin  Read exact UTF-8 text through EOF; no newline is added or removed.
+          Encode UTF-8 bytes and write redirected StandardInput.BaseStream for
+          exact Windows PowerShell5 quotes/backslashes/Unicode. The installed
+          skill includes this helper. A PowerShell pipeline adds a trailing newline.
   notify  Text as one argument. Show one independent notification for each call,
           even for identical text. Standard blue border and sound. Unicode and
           newlines are preserved. Returns success/error without waiting for
@@ -69,3 +74,9 @@ in the background if needed. No provider, model, API key or internet is needed.
 Success (exit 0) follows the application's completed result; failures use stderr
 and exit 1. Waiting is bounded to 20 seconds. A lost reply may follow execution:
 the client never automatically repeats a sent command.
+
+Saved reminder results remain successful if desktop reconciliation fails;
+an optional warnings array reports the display/sound problem separately.
+Notification success waits for native initial placement/show completion. If that
+cannot be confirmed, an error explains that a card may already exist; do not
+automatically send another notification after that uncertain result.

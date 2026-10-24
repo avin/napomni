@@ -30,7 +30,10 @@ arguments and every supported schedule, read `& $cli schema` (JSON).
 
 ## Choose the operation
 
-- **Notify now:** `& $cli notify $text`, passing the complete text as one argument.
+- **Notify now:** `& (Join-Path $skillDirectory 'scripts/notify.ps1') -Text $text`.
+  This bundled helper writes exact UTF-8 text to `notify --stdin`, without adding
+  a newline. It preserves embedded quotes and trailing backslashes on Windows
+  PowerShell 5, whose native argument marshalling can otherwise remove quotes.
   It creates an independent blue toast with sound and no saved reminder or
   schedule. Each call creates a separate card, including identical text. The
   result reports creation success or error; it gives no notification ID and
@@ -58,3 +61,9 @@ Check the exit code and returned JSON. Exit 0 confirms the application's result;
 exit 1 supplies diagnostics on stderr. A lost reply can follow execution: report
 the uncertainty and inspect reminder state where applicable. Do not automatically
 repeat a notification after an uncertain response; a new call creates another card.
+
+A successful saved reminder operation may include `warnings` about desktop
+display or sound. Its saved facts still apply; report the warning separately.
+Notification errors can mean native creation could not be confirmed and a card
+may already exist. Preserve that uncertainty instead of treating it as proof
+that nothing was shown.

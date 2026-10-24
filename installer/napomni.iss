@@ -42,6 +42,7 @@ Source: "{#AppBinary}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#CliBinary}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\agent-skill\napomni\SKILL.md"; DestDir: "{app}\resources\agent-skill\napomni"; Flags: ignoreversion
+Source: "assets\agent-skill\napomni\scripts\notify.ps1"; DestDir: "{app}\resources\agent-skill\napomni\scripts"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\Napomni"; Filename: "{app}\napomni.exe"; Parameters: "--open"

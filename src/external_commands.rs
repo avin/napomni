@@ -65,3 +65,22 @@ pub fn execute(app: &mut Application, command: &str, arguments: &Value) -> Resul
         _ => bail!("Unknown command: {command}"),
     }
 }
+
+/// Complete a command at the desktop adapter boundary without reversing saved facts.
+pub fn with_desktop_result(
+    command: &str,
+    mut value: serde_json::Value,
+    adapter: Result<()>,
+) -> Result<serde_json::Value> {
+    if let Err(error) = adapter {
+        if command == "notify" {
+            anyhow::bail!(
+                "Notification creation could not be confirmed; a card may already exist: {error:#}"
+            );
+        }
+        value["warnings"] = serde_json::json!([format!(
+            "Command completed; desktop reconciliation failed: {error:#}"
+        )]);
+    }
+    Ok(value)
+}

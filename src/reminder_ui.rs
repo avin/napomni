@@ -80,13 +80,22 @@ pub fn shutdown(cx: &mut App) {
     }
 }
 pub fn poll(cx: &mut App) -> anyhow::Result<bool> {
+    cx.global::<Reminders>()
+        .app
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Ядро напоминаний недоступно"))?
+        .tick()?;
+    reconcile(cx).map(|(changed, _)| changed)
+}
+
+/// Reconcile committed snapshots independently of scheduler/storage work.
+pub fn reconcile(cx: &mut App) -> anyhow::Result<(bool, Option<crate::toast_stack::NativeReady>)> {
     let (reminders, toasts, signal_active, statuses) = {
-        let mut app = cx
+        let app = cx
             .global::<Reminders>()
             .app
             .lock()
             .map_err(|_| anyhow::anyhow!("Ядро напоминаний недоступно"))?;
-        app.tick()?;
         (
             app.reminders().to_vec(),
             app.open_toasts().to_vec(),
@@ -104,7 +113,7 @@ pub fn poll(cx: &mut App) -> anyhow::Result<bool> {
     cx.global_mut::<Reminders>().last_statuses = statuses;
     cx.global_mut::<Reminders>().last_reminders = reminders;
     cx.global_mut::<Reminders>().last_toasts = toasts.clone();
-    crate::toast_stack::sync(toasts, cx)?;
+    let ready = crate::toast_stack::sync(toasts, cx)?;
     sound_result?;
-    Ok(changed)
+    Ok((changed, ready))
 }
