@@ -119,9 +119,10 @@ fn fixture_notify_host() {
     .unwrap();
     let pending = local_host::serve().unwrap();
     std::fs::write(directory.join("ready"), "ready").unwrap();
+    // This includes helper installation and a cold PowerShell startup on CI.
     let command = pending
-        .recv_timeout(std::time::Duration::from_secs(10))
-        .unwrap();
+        .recv_timeout(std::time::Duration::from_secs(60))
+        .expect("fixture did not receive a notification within 60 seconds");
     let result = execute(
         &mut app,
         &command.request.command,
